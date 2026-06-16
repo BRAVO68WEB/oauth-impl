@@ -17,33 +17,43 @@ func NewAuthCodeRepository(db *sql.DB) *AuthCodeRepository {
 
 func (r *AuthCodeRepository) Save(code *models.AuthorizationCode) error {
 	scopes, _ := json.Marshal(code.Scopes)
-	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes,
+	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, resource, nonce,
 		code_challenge, code_challenge_method, expires_at, used)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
 		code.Code, code.ClientID, code.UserID, code.RedirectURI,
-		string(scopes), code.CodeChallenge, code.CodeChallengeMethod,
+		string(scopes), code.Resource, code.Nonce,
+		code.CodeChallenge, code.CodeChallengeMethod,
 		code.ExpiresAt, code.Used,
 	)
 	return err
 }
 
 func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error) {
-	query := `SELECT code, client_id, user_id, redirect_uri, scopes,
+	query := `SELECT code, client_id, user_id, redirect_uri, scopes, resource, nonce,
 		code_challenge, code_challenge_method, expires_at, used
 		FROM authorization_codes WHERE code = ?`
 
 	ac := &models.AuthorizationCode{}
 	var scopes string
+	var resource, nonce sql.NullString
 
 	err := r.db.QueryRow(query, code).Scan(
 		&ac.Code, &ac.ClientID, &ac.UserID, &ac.RedirectURI,
-		&scopes, &ac.CodeChallenge, &ac.CodeChallengeMethod,
+		&scopes, &resource, &nonce,
+		&ac.CodeChallenge, &ac.CodeChallengeMethod,
 		&ac.ExpiresAt, &ac.Used,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if resource.Valid {
+		ac.Resource = resource.String
+	}
+	if nonce.Valid {
+		ac.Nonce = nonce.String
 	}
 
 	if err := json.Unmarshal([]byte(scopes), &ac.Scopes); err != nil {

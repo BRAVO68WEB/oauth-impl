@@ -8,6 +8,7 @@ import (
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
 
 type ClientService struct {
@@ -42,7 +43,7 @@ func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, e
 
 	client := &models.Client{
 		ID:                                    uuid.New().String(),
-		Secret:                                uuid.New().String(),
+		Secret:                                generateSecret(),
 		Name:                                  input.Name,
 		RedirectURIs:                          input.RedirectURIs,
 		GrantTypes:                            input.GrantTypes,
@@ -105,4 +106,12 @@ func (s *ClientService) ValidateGrantType(client *models.Client, grantType strin
 		}
 	}
 	return fmt.Errorf("client not authorized for %s grant", grantType)
+}
+
+func generateSecret() string {
+	secret, err := crypto.GenerateToken()
+	if err != nil {
+		return uuid.New().String()
+	}
+	return secret
 }

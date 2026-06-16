@@ -3,18 +3,19 @@ info:
   title: OAuth Implementation Server
   description: |
     A comprehensive OAuth 2.0 / OpenID Connect implementation server for testing all OAuth flows and standards.
-    
-    Supports: Authorization Code + PKCE, Client Credentials, Device Code (RFC 8628), 
+
+    Supports: Authorization Code + PKCE, Client Credentials, Device Code (RFC 8628),
     CIBA (Client-Initiated Backchannel Authentication), PAR (RFC 9126), DPoP (RFC 9449),
     Token Introspection (RFC 7662), Token Revocation (RFC 7009), Dynamic Client Registration (RFC 7591),
-    OIDC Discovery, JWKS, UserInfo, and TOTP-based MFA.
-  version: 1.0.0
+    Resource Indicators (RFC 8707), OIDC Discovery, JWKS, UserInfo, TOTP-based MFA,
+    Consent Management, Custom Scopes, and login_hint/prompt/max_age parameters.
+  version: 1.1.0
   contact:
     name: API Support
     url: https://github.com/bravo68web/oauth-impl
 
 servers:
-  - url: http://localhost:8080
+  - url: https://localhost:8080
     description: Local development server
 
 tags:
@@ -26,6 +27,12 @@ tags:
     description: OpenID Connect endpoints for identity and discovery
   - name: Management
     description: Administrative API for managing clients, users, and tokens
+  - name: Scopes
+    description: Custom scope management for defining and organizing OAuth scopes
+  - name: Resources
+    description: Resource server management for RFC 8707 Resource Indicators
+  - name: Consents
+    description: User consent management for tracking authorization grants
   - name: CIBA
     description: Client-Initiated Backchannel Authentication (CIBA) for decoupled flows
   - name: Device
@@ -45,7 +52,7 @@ paths:
         Returns HTTP 200 with `{"status":"ok"}` when healthy.
       operationId: healthCheck
       responses:
-        '200':
+        "200":
           description: Server is healthy
           content:
             application/json:
@@ -70,7 +77,7 @@ paths:
       description: |
         Register a new OAuth 2.0 client dynamically. Returns client credentials including
         `client_id` and `client_secret`. The client can then be used with any supported grant type.
-        
+
         See [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) for details.
       operationId: registerClient
       requestBody:
@@ -78,19 +85,19 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DCRRequest'
+              $ref: "#/components/schemas/DCRRequest"
             example:
               client_name: "My Web App"
               redirect_uris: ["https://example.com/callback"]
               grant_types: ["authorization_code", "client_credentials"]
               scope: "openid profile email"
       responses:
-        '201':
+        "201":
           description: Client registered successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DCRResponse'
+                $ref: "#/components/schemas/DCRResponse"
               example:
                 client_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                 client_secret: "s3cr3t-k3y-h3r3-4nd-l0ng3r-th4n-th1s"
@@ -102,12 +109,12 @@ paths:
                 response_types: ["code"]
                 client_name: "My Web App"
                 scope: "openid profile email"
-        '400':
+        "400":
           description: Invalid request (missing required fields or invalid redirect URI)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: invalid_request
                 error_description: "client_name is required"
@@ -120,9 +127,9 @@ paths:
         Initiates the OAuth 2.0 authorization flow. The user-agent is redirected to this endpoint
         to authenticate the user and obtain consent. On success, redirects back to the client
         with an authorization code.
-        
+
         For testing, pass `user_id` to auto-approve without user interaction.
-        
+
         Supports PKCE via `code_challenge` and `code_challenge_method` parameters.
       operationId: authorize
       parameters:
@@ -138,7 +145,16 @@ paths:
           required: true
           schema:
             type: string
-            enum: [code, token, id_token, "code id_token", "code token", "code id_token token", none]
+            enum:
+              [
+                code,
+                token,
+                id_token,
+                "code id_token",
+                "code token",
+                "code id_token token",
+                none,
+              ]
           description: |
             OAuth response type:
             - `code`: Authorization code flow (query parameter)
@@ -187,6 +203,32 @@ paths:
             type: string
           description: OpenID Connect nonce for replay protection
           example: "n-0S6_WzA2Mj"
+        - name: prompt
+          in: query
+          schema:
+            type: string
+            enum: [none, login, consent, select_account]
+          description: |
+            OIDC prompt parameter:
+            - `none`: No UI shown; fail if not already authenticated and consented
+            - `login`: Force re-authentication even if already logged in
+            - `consent`: Force consent screen even if previously consented
+            - `select_account`: Account chooser (not yet implemented)
+          example: consent
+        - name: login_hint
+          in: query
+          schema:
+            type: string
+          description: Hint to pre-fill the username on the login page
+          example: "johndoe"
+        - name: resource
+          in: query
+          schema:
+            type: string
+          description: |
+            Resource indicator (RFC 8707). The URI of the resource server the client wants to access.
+            The issued token will be scoped to this resource.
+          example: "https://api.example.com"
         - name: user_id
           in: query
           schema:
@@ -194,7 +236,7 @@ paths:
           description: User ID for auto-approval (testing only, not part of standard OAuth)
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
-        '302':
+        "302":
           description: |
             Redirect to client with authorization code. The `Location` header contains the
             redirect URI with `code` and `state` query parameters.
@@ -204,12 +246,12 @@ paths:
               schema:
                 type: string
                 example: "https://example.com/callback?code=SplxlOBeZQQYbYS6WxSbIA&state=abc123xyz"
-        '400':
+        "400":
           description: Invalid request (missing parameters, invalid client, etc.)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: invalid_request
                 error_description: "client_id is required"
@@ -221,13 +263,13 @@ paths:
       summary: Token endpoint
       description: |
         Exchanges an authorization grant for tokens. Supports multiple grant types:
-        
+
         - **authorization_code**: Exchange an authorization code for tokens (requires `code`, `redirect_uri`, optionally `code_verifier`)
         - **client_credentials**: Get a token for the client itself (no user involved)
         - **refresh_token**: Get a new access token using a refresh token
         - **device_code**: Poll for device authorization completion (RFC 8628)
         - **CIBA**: Poll for backchannel authentication completion
-        
+
         Client can authenticate via HTTP Basic auth or `client_id`/`client_secret` in the body.
       operationId: token
       security:
@@ -270,6 +312,12 @@ paths:
                 scope:
                   type: string
                   description: Requested scopes (optional, may be reduced by server)
+                resource:
+                  type: string
+                  description: |
+                    Resource indicator (RFC 8707). The URI of the resource server.
+                    The issued token will be scoped to this resource.
+                  example: "https://api.example.com"
                 client_id:
                   type: string
                   description: Client ID (alternative to HTTP Basic auth)
@@ -305,12 +353,12 @@ paths:
                   grant_type: "urn:openid:params:grant-type:ciba"
                   auth_req_id: "1c266114-a1be-4252-8ad1-04986c5b9ac1"
       responses:
-        '200':
+        "200":
           description: Token response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenResponse'
+                $ref: "#/components/schemas/TokenResponse"
               example:
                 access_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
                 token_type: "Bearer"
@@ -318,12 +366,12 @@ paths:
                 refresh_token: "tGzv3JOkF0XG5Qx2TlKWIA"
                 scope: "openid profile"
                 id_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-        '400':
+        "400":
           description: Error response (invalid grant, expired code, etc.)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               examples:
                 invalid_grant:
                   summary: Invalid or expired authorization code
@@ -348,7 +396,7 @@ paths:
       description: |
         Revokes an access token or refresh token. Invalidates the token immediately.
         Revoking a refresh token also invalidates the associated access token.
-        
+
         See [RFC 7009](https://datatracker.ietf.org/doc/html/rfc7009) for details.
       operationId: revokeToken
       security:
@@ -378,14 +426,14 @@ paths:
               token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
               token_type_hint: "access_token"
       responses:
-        '200':
+        "200":
           description: Token revoked successfully (or token was already invalid)
-        '400':
+        "400":
           description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
 
   /oauth/introspect:
     post:
@@ -394,7 +442,7 @@ paths:
       description: |
         Allows a protected resource to query the authorization server about the state of a token.
         Returns whether the token is active, along with metadata like scopes, client_id, and subject.
-        
+
         See [RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662) for details.
       operationId: introspectToken
       security:
@@ -423,12 +471,12 @@ paths:
             example:
               token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
       responses:
-        '200':
+        "200":
           description: Token introspection result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IntrospectionResponse'
+                $ref: "#/components/schemas/IntrospectionResponse"
               examples:
                 active_token:
                   summary: Active token
@@ -452,11 +500,11 @@ paths:
       summary: Device authorization (RFC 8628)
       description: |
         Initiates the Device Authorization Grant for input-constrained devices (smart TVs, IoT, CLI tools).
-        
+
         Returns a `device_code`, `user_code`, and `verification_uri`. The user visits the verification URI
         on another device and enters the user code. The client polls `/oauth/token` with the device_code
         until the user completes authorization.
-        
+
         See [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628) for details.
       operationId: deviceAuthorization
       security:
@@ -480,12 +528,12 @@ paths:
             example:
               scope: "openid profile"
       responses:
-        '200':
+        "200":
           description: Device authorization initiated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeviceAuthorizationResponse'
+                $ref: "#/components/schemas/DeviceAuthorizationResponse"
               example:
                 device_code: "GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS"
                 user_code: "WDJB-MJHT"
@@ -493,12 +541,12 @@ paths:
                 verification_uri_complete: "http://localhost:8080/device?user_code=WDJB-MJHT"
                 expires_in: 1800
                 interval: 5
-        '400':
+        "400":
           description: Client not authorized for device_code grant
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: unauthorized_client
                 error_description: "Client not authorized for device_code grant"
@@ -511,10 +559,10 @@ paths:
         Pushes authorization request parameters directly to the authorization server, receiving a
         `request_uri` in return. The client then redirects the user-agent to `/oauth/authorize`
         with only `request_uri` and `client_id`.
-        
+
         PAR provides confidentiality and integrity protection for authorization requests,
         and allows the server to validate requests before user interaction.
-        
+
         See [RFC 9126](https://datatracker.ietf.org/doc/html/rfc9126) for details.
       operationId: pushedAuthorizationRequest
       security:
@@ -535,7 +583,16 @@ paths:
                   description: Client secret (alternative to HTTP Basic auth)
                 response_type:
                   type: string
-                  enum: [code, token, id_token, "code id_token", "code token", "code id_token token", none]
+                  enum:
+                    [
+                      code,
+                      token,
+                      id_token,
+                      "code id_token",
+                      "code token",
+                      "code id_token token",
+                      none,
+                    ]
                   description: OAuth response type
                 redirect_uri:
                   type: string
@@ -562,21 +619,21 @@ paths:
               code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
               code_challenge_method: S256
       responses:
-        '201':
+        "201":
           description: PAR created successfully. Use the returned `request_uri` in /oauth/authorize.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PARResponse'
+                $ref: "#/components/schemas/PARResponse"
               example:
                 request_uri: "urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c"
                 expires_in: 60
-        '400':
+        "400":
           description: Invalid request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: invalid_request
                 error_description: "Invalid redirect_uri"
@@ -587,13 +644,13 @@ paths:
       summary: CIBA backchannel authentication
       description: |
         Initiates Client-Initiated Backchannel Authentication (CIBA) for decoupled authentication flows.
-        
+
         The client sends a hint identifying the user (e.g., `login_hint`). The authorization server
         authenticates the user out-of-band (e.g., push notification on their phone). The client
         polls `/oauth/token` with the returned `auth_req_id`.
-        
+
         The `scope` parameter MUST include `openid`.
-        
+
         For ping/push delivery modes, `client_notification_token` is required.
       operationId: cibaAuthorize
       security:
@@ -642,22 +699,22 @@ paths:
                   type: string
                   description: Client secret (alternative to HTTP Basic auth)
       responses:
-        '200':
+        "200":
           description: CIBA authentication initiated. Poll /oauth/token with the auth_req_id.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CIBAResponse'
+                $ref: "#/components/schemas/CIBAResponse"
               example:
                 auth_req_id: "1c266114-a1be-4252-8ad1-04986c5b9ac1"
                 expires_in: 120
                 interval: 5
-        '400':
+        "400":
           description: Invalid request or client not authorized for CIBA
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: unauthorized_client
                 error_description: "Client not authorized for CIBA grant"
@@ -673,16 +730,16 @@ paths:
       description: |
         Returns the OpenID Connect Discovery document containing all server metadata:
         endpoint URLs, supported scopes, grant types, signing algorithms, etc.
-        
+
         Clients use this to auto-configure themselves.
       operationId: oidcDiscovery
       responses:
-        '200':
+        "200":
           description: OIDC discovery document
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OIDCDiscovery'
+                $ref: "#/components/schemas/OIDCDiscovery"
               example:
                 issuer: "http://localhost:8080"
                 authorization_endpoint: "http://localhost:8080/oauth/authorize"
@@ -695,16 +752,61 @@ paths:
                 device_authorization_endpoint: "http://localhost:8080/oauth/device"
                 pushed_authorization_request_endpoint: "http://localhost:8080/oauth/par"
                 backchannel_authentication_endpoint: "http://localhost:8080/oauth/bc-authorize"
-                scopes_supported: ["openid", "profile", "email", "address", "phone", "offline_access"]
-                response_types_supported: ["code", "token", "id_token", "code id_token", "code token", "code id_token token", "none"]
+                scopes_supported:
+                  [
+                    "openid",
+                    "profile",
+                    "email",
+                    "address",
+                    "phone",
+                    "offline_access",
+                  ]
+                response_types_supported:
+                  [
+                    "code",
+                    "token",
+                    "id_token",
+                    "code id_token",
+                    "code token",
+                    "code id_token token",
+                    "none",
+                  ]
                 response_modes_supported: ["query", "fragment"]
-                grant_types_supported: ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:openid:params:grant-type:ciba"]
-                token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt", "none"]
-                token_endpoint_auth_signing_alg_values_supported: ["RS256", "ES256"]
+                grant_types_supported:
+                  [
+                    "authorization_code",
+                    "client_credentials",
+                    "refresh_token",
+                    "urn:ietf:params:oauth:grant-type:device_code",
+                    "urn:openid:params:grant-type:ciba",
+                  ]
+                token_endpoint_auth_methods_supported:
+                  [
+                    "client_secret_basic",
+                    "client_secret_post",
+                    "client_secret_jwt",
+                    "private_key_jwt",
+                    "none",
+                  ]
+                token_endpoint_auth_signing_alg_values_supported:
+                  ["RS256", "ES256"]
                 subject_types_supported: ["public"]
                 id_token_signing_alg_values_supported: ["RS256", "ES256"]
                 code_challenge_methods_supported: ["S256", "plain"]
-                claims_supported: ["sub", "name", "given_name", "family_name", "preferred_username", "email", "email_verified", "phone_number", "picture", "locale", "updated_at"]
+                claims_supported:
+                  [
+                    "sub",
+                    "name",
+                    "given_name",
+                    "family_name",
+                    "preferred_username",
+                    "email",
+                    "email_verified",
+                    "phone_number",
+                    "picture",
+                    "locale",
+                    "updated_at",
+                  ]
                 claims_parameter_supported: true
                 request_parameter_supported: true
                 request_uri_parameter_supported: true
@@ -712,6 +814,8 @@ paths:
                 backchannel_token_delivery_modes_supported: ["poll", "ping"]
                 backchannel_user_code_parameter_supported: false
                 dpop_signing_alg_values_supported: ["ES256"]
+                resource_indicators_supported: true
+                authorization_response_iss_parameter_supported: true
 
   /.well-known/oauth-authorization-server:
     get:
@@ -722,12 +826,12 @@ paths:
         Same content as OpenID Connect Discovery for this server.
       operationId: asMetadata
       responses:
-        '200':
+        "200":
           description: Authorization server metadata
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OIDCDiscovery'
+                $ref: "#/components/schemas/OIDCDiscovery"
 
   /oidc/jwks:
     get:
@@ -736,16 +840,16 @@ paths:
       description: |
         Returns the server's public keys in JWKS format. Clients and resource servers use these
         keys to verify JWT signatures (ID tokens, access tokens).
-        
+
         The server generates RSA-2048 and EC P-256 keys on startup.
       operationId: jwks
       responses:
-        '200':
+        "200":
           description: JWKS response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/JWKS'
+                $ref: "#/components/schemas/JWKS"
               example:
                 keys:
                   - kty: "RSA"
@@ -773,12 +877,12 @@ paths:
       security:
         - bearerAuth: []
       responses:
-        '200':
+        "200":
           description: UserInfo response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserInfo'
+                $ref: "#/components/schemas/UserInfo"
               example:
                 sub: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
                 name: "johndoe"
@@ -792,12 +896,12 @@ paths:
                 picture: "https://example.com/johndoe/photo.jpg"
                 locale: "en-US"
                 updated_at: 1718000000
-        '401':
+        "401":
           description: Unauthorized (missing or invalid token)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: invalid_token
                 error_description: "Token not found"
@@ -813,14 +917,14 @@ paths:
       description: Returns all registered OAuth clients.
       operationId: listClients
       responses:
-        '200':
+        "200":
           description: List of clients
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Client'
+                  $ref: "#/components/schemas/Client"
               example:
                 - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                   name: "My Web App"
@@ -844,38 +948,40 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ManagementClientCreate'
+              $ref: "#/components/schemas/ManagementClientCreate"
             example:
               name: "My Web App"
               redirect_uris: ["https://example.com/callback"]
-              grant_types: ["authorization_code", "client_credentials", "refresh_token"]
+              grant_types:
+                ["authorization_code", "client_credentials", "refresh_token"]
               scopes: ["openid", "profile", "email"]
               token_endpoint_auth_method: "client_secret_basic"
       responses:
-        '201':
+        "201":
           description: Client created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Client'
+                $ref: "#/components/schemas/Client"
               example:
                 id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
                 secret: "s3cr3t-k3y-h3r3-4nd-l0ng3r-th4n-th1s"
                 name: "My Web App"
                 redirect_uris: ["https://example.com/callback"]
-                grant_types: ["authorization_code", "client_credentials", "refresh_token"]
+                grant_types:
+                  ["authorization_code", "client_credentials", "refresh_token"]
                 scopes: ["openid", "profile", "email"]
                 token_endpoint_auth_method: "client_secret_basic"
                 dpop_bound_access_tokens: false
                 require_pushed_authorization_requests: false
                 created_at: "2026-06-16T10:00:00Z"
                 updated_at: "2026-06-16T10:00:00Z"
-        '400':
+        "400":
           description: Invalid request (name is required)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
 
   /api/clients/{clientID}:
     get:
@@ -892,18 +998,18 @@ paths:
           description: The client ID
           example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
       responses:
-        '200':
+        "200":
           description: Client details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Client'
-        '404':
+                $ref: "#/components/schemas/Client"
+        "404":
           description: Client not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: not_found
                 error_description: "Client not found"
@@ -925,18 +1031,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ManagementClientCreate'
+              $ref: "#/components/schemas/ManagementClientCreate"
             example:
               name: "Updated App Name"
               scopes: ["openid", "profile", "email", "phone"]
       responses:
-        '200':
+        "200":
           description: Client updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Client'
-        '404':
+                $ref: "#/components/schemas/Client"
+        "404":
           description: Client not found
     delete:
       tags: [Management]
@@ -952,7 +1058,7 @@ paths:
           description: The client ID
           example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
       responses:
-        '200':
+        "200":
           description: Client deleted
           content:
             application/json:
@@ -966,14 +1072,14 @@ paths:
       description: Returns all registered users.
       operationId: listUsers
       responses:
-        '200':
+        "200":
           description: List of users
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/User'
+                  $ref: "#/components/schemas/User"
               example:
                 - id: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
                   username: "johndoe"
@@ -990,31 +1096,31 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateUserRequest'
+              $ref: "#/components/schemas/CreateUserRequest"
             example:
               username: "johndoe"
               password: "secureP@ss123"
               email: "john@example.com"
               phone_number: "+1-555-123-4567"
       responses:
-        '201':
+        "201":
           description: User created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                $ref: "#/components/schemas/User"
               example:
                 id: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
                 username: "johndoe"
                 email: "john@example.com"
                 phone_number: "+1-555-123-4567"
                 created_at: "2026-06-16T10:00:00Z"
-        '400':
+        "400":
           description: Invalid request (username already exists, missing fields)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
               example:
                 error: invalid_request
                 error_description: "username already exists"
@@ -1034,18 +1140,18 @@ paths:
           description: The user ID
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
-        '200':
+        "200":
           description: User details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
-        '404':
+                $ref: "#/components/schemas/User"
+        "404":
           description: User not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OAuthError'
+                $ref: "#/components/schemas/OAuthError"
 
   /api/tokens:
     get:
@@ -1067,14 +1173,14 @@ paths:
           description: Filter by user ID
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
-        '200':
+        "200":
           description: List of tokens
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AccessToken'
+                  $ref: "#/components/schemas/AccessToken"
               example:
                 - token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
                   client_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -1098,12 +1204,368 @@ paths:
             type: string
           description: The access token to revoke
       responses:
-        '200':
+        "200":
           description: Token revoked
           content:
             application/json:
               example:
                 status: revoked
+
+  # ──────────────────────────────────────────────
+  # Scope Management
+  # ──────────────────────────────────────────────
+
+  /api/scopes:
+    get:
+      tags: [Scopes]
+      summary: List all scopes
+      description: Returns all registered custom scopes.
+      operationId: listScopes
+      responses:
+        "200":
+          description: List of scopes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scope"
+              example:
+                - name: "read"
+                  description: "Read access to resources"
+                  resource_server: "https://api.example.com"
+                  is_default: false
+                  created_at: "2026-06-16T10:00:00Z"
+                - name: "write"
+                  description: "Write access to resources"
+                  resource_server: "https://api.example.com"
+                  is_default: false
+                  created_at: "2026-06-16T10:00:00Z"
+    post:
+      tags: [Scopes]
+      summary: Create a new scope
+      description: Registers a new custom scope that can be assigned to clients and resources.
+      operationId: createScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScopeRequest"
+            example:
+              name: "read"
+              description: "Read access to resources"
+              resource_server: "https://api.example.com"
+              is_default: false
+      responses:
+        "201":
+          description: Scope created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scope"
+              example:
+                name: "read"
+                description: "Read access to resources"
+                resource_server: "https://api.example.com"
+                is_default: false
+                created_at: "2026-06-16T10:00:00Z"
+        "409":
+          description: Scope already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+
+  /api/scopes/{name}:
+    get:
+      tags: [Scopes]
+      summary: Get scope by name
+      description: Returns a single scope by its name.
+      operationId: getScope
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The scope name
+          example: "read"
+      responses:
+        "200":
+          description: Scope details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scope"
+        "404":
+          description: Scope not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+    delete:
+      tags: [Scopes]
+      summary: Delete a scope
+      description: Permanently deletes a scope definition.
+      operationId: deleteScope
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The scope name to delete
+          example: "read"
+      responses:
+        "200":
+          description: Scope deleted
+          content:
+            application/json:
+              example:
+                status: deleted
+
+  # ──────────────────────────────────────────────
+  # Resource Management (RFC 8707)
+  # ──────────────────────────────────────────────
+
+  /api/resources:
+    get:
+      tags: [Resources]
+      summary: List all resource servers
+      description: Returns all registered resource servers.
+      operationId: listResources
+      responses:
+        "200":
+          description: List of resource servers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+              example:
+                - uri: "https://api.example.com"
+                  name: "Example API"
+                  description: "Main API server"
+                  scopes: ["read", "write", "admin"]
+                  created_at: "2026-06-16T10:00:00Z"
+    post:
+      tags: [Resources]
+      summary: Register a resource server
+      description: Registers a new resource server with its allowed scopes (RFC 8707).
+      operationId: createResource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateResourceRequest"
+            example:
+              uri: "https://api.example.com"
+              name: "Example API"
+              description: "Main API server"
+              scopes: ["read", "write", "admin"]
+      responses:
+        "201":
+          description: Resource server registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Resource"
+              example:
+                uri: "https://api.example.com"
+                name: "Example API"
+                description: "Main API server"
+                scopes: ["read", "write", "admin"]
+                created_at: "2026-06-16T10:00:00Z"
+        "409":
+          description: Resource already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+
+  /api/resources/{uri}:
+    get:
+      tags: [Resources]
+      summary: Get resource server by URI
+      description: Returns a single resource server by its URI.
+      operationId: getResource
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The resource server URI (URL-encoded)
+          example: "https://api.example.com"
+      responses:
+        "200":
+          description: Resource server details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Resource"
+        "404":
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+    put:
+      tags: [Resources]
+      summary: Update resource server
+      description: Updates an existing resource server's metadata and scopes.
+      operationId: updateResource
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The resource server URI
+          example: "https://api.example.com"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateResourceRequest"
+            example:
+              name: "Updated API Name"
+              description: "Updated description"
+              scopes: ["read", "write", "admin", "delete"]
+      responses:
+        "200":
+          description: Resource updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Resource"
+        "404":
+          description: Resource not found
+    delete:
+      tags: [Resources]
+      summary: Delete resource server
+      description: Permanently deletes a resource server.
+      operationId: deleteResource
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The resource server URI to delete
+          example: "https://api.example.com"
+      responses:
+        "200":
+          description: Resource deleted
+          content:
+            application/json:
+              example:
+                status: deleted
+
+  /api/resources/{uri}/scopes:
+    get:
+      tags: [Resources]
+      summary: List scopes for a resource
+      description: Returns all scopes associated with a specific resource server.
+      operationId: listResourceScopes
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The resource server URI
+          example: "https://api.example.com"
+      responses:
+        "200":
+          description: List of scopes for the resource
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scope"
+
+  # ──────────────────────────────────────────────
+  # Consent Management
+  # ──────────────────────────────────────────────
+
+  /api/consents:
+    get:
+      tags: [Consents]
+      summary: List consents for a user
+      description: Returns all consents granted by a specific user.
+      operationId: listConsents
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The user ID
+          example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
+      responses:
+        "200":
+          description: List of consents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Consent"
+              example:
+                - id: "c1o2n3s4-e5n6-t789-abcd-ef1234567890"
+                  user_id: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
+                  client_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  scopes: ["openid", "profile", "email"]
+                  granted_at: "2026-06-16T10:00:00Z"
+        "400":
+          description: Missing user_id parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+    delete:
+      tags: [Consents]
+      summary: Revoke a consent
+      description: Revokes a user's consent for a specific client.
+      operationId: revokeConsent
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The user ID
+          example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The client ID
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        "200":
+          description: Consent revoked
+          content:
+            application/json:
+              example:
+                status: revoked
+        "400":
+          description: Missing parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+
+  # ──────────────────────────────────────────────
+  # CIBA Management
+  # ──────────────────────────────────────────────
 
   /api/ciba/pending:
     get:
@@ -1112,14 +1574,14 @@ paths:
       description: Returns all CIBA requests with status "pending" that haven't expired.
       operationId: listPendingCIBA
       responses:
-        '200':
+        "200":
           description: List of pending CIBA requests
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/CIBARequest'
+                  $ref: "#/components/schemas/CIBARequest"
               example:
                 - auth_req_id: "1c266114-a1be-4252-8ad1-04986c5b9ac1"
                   client_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -1156,7 +1618,7 @@ paths:
             example:
               user_id: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
-        '200':
+        "200":
           description: CIBA request approved
           content:
             application/json:
@@ -1189,7 +1651,7 @@ paths:
             example:
               reason: "Suspicious login attempt"
       responses:
-        '200':
+        "200":
           description: CIBA request denied
           content:
             application/json:
@@ -1216,7 +1678,7 @@ paths:
           description: Pre-filled user code from the device
           example: "WDJB-MJHT"
       responses:
-        '200':
+        "200":
           description: HTML verification form
           content:
             text/html:
@@ -1244,7 +1706,7 @@ paths:
                   type: string
                   description: User ID for approval
       responses:
-        '200':
+        "200":
           description: Verification approved (HTML confirmation page)
           content:
             text/html:
@@ -1261,14 +1723,14 @@ paths:
       description: Returns pending CIBA requests for the mobile polling CLI.
       operationId: cibaPending
       responses:
-        '200':
+        "200":
           description: List of pending requests
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/CIBARequest'
+                  $ref: "#/components/schemas/CIBARequest"
 
   /ciba/poll:
     get:
@@ -1279,7 +1741,7 @@ paths:
         until a request arrives or timeout occurs.
       operationId: cibaPoll
       responses:
-        '200':
+        "200":
           description: Next pending request or timeout status
           content:
             application/json:
@@ -1317,7 +1779,7 @@ paths:
           description: User ID to associate with approval
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
-        '200':
+        "200":
           description: Request approved
           content:
             application/json:
@@ -1345,7 +1807,7 @@ paths:
           description: Reason for denial
           example: "User denied"
       responses:
-        '200':
+        "200":
           description: Request denied
           content:
             application/json:
@@ -1395,13 +1857,13 @@ components:
           type: array
           items:
             type: string
-          description: "Requested grant types. Default: [\"authorization_code\"]"
+          description: 'Requested grant types. Default: ["authorization_code"]'
           example: ["authorization_code", "client_credentials"]
         response_types:
           type: array
           items:
             type: string
-          description: "Requested response types. Default: [\"code\"]"
+          description: 'Requested response types. Default: ["code"]'
           example: ["code"]
         scope:
           type: string
@@ -1499,7 +1961,8 @@ components:
       example:
         name: "My Web App"
         redirect_uris: ["https://example.com/callback"]
-        grant_types: ["authorization_code", "client_credentials", "refresh_token"]
+        grant_types:
+          ["authorization_code", "client_credentials", "refresh_token"]
         scopes: ["openid", "profile", "email"]
         token_endpoint_auth_method: "client_secret_basic"
       properties:
@@ -1958,6 +2421,195 @@ components:
           description: Minimum polling interval in seconds
           example: 5
 
+    # ── Scope ──
+
+    CreateScopeRequest:
+      type: object
+      required: [name]
+      description: Request body for creating a scope
+      example:
+        name: "read"
+        description: "Read access to resources"
+        resource_server: "https://api.example.com"
+        is_default: false
+      properties:
+        name:
+          type: string
+          description: Scope name (must be unique)
+          example: "read"
+        description:
+          type: string
+          description: Human-readable description of the scope
+          example: "Read access to resources"
+        resource_server:
+          type: string
+          description: Resource server URI this scope belongs to (null for system scopes)
+          example: "https://api.example.com"
+        is_default:
+          type: boolean
+          description: Whether this scope is automatically granted to new clients
+          example: false
+
+    Scope:
+      type: object
+      description: OAuth scope definition
+      example:
+        name: "read"
+        description: "Read access to resources"
+        resource_server: "https://api.example.com"
+        is_default: false
+        created_at: "2026-06-16T10:00:00Z"
+      properties:
+        name:
+          type: string
+          description: Unique scope name
+          example: "read"
+        description:
+          type: string
+          description: Human-readable description
+          example: "Read access to resources"
+        resource_server:
+          type: string
+          description: Associated resource server URI (null for system scopes)
+          example: "https://api.example.com"
+        is_default:
+          type: boolean
+          description: Whether this is a default scope
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          description: Scope creation timestamp
+          example: "2026-06-16T10:00:00Z"
+
+    # ── Resource (RFC 8707) ──
+
+    CreateResourceRequest:
+      type: object
+      required: [uri, name]
+      description: Request body for registering a resource server
+      example:
+        uri: "https://api.example.com"
+        name: "Example API"
+        description: "Main API server"
+        scopes: ["read", "write", "admin"]
+      properties:
+        uri:
+          type: string
+          description: Resource server URI (must be unique, HTTPS recommended)
+          example: "https://api.example.com"
+        name:
+          type: string
+          description: Human-readable resource name
+          example: "Example API"
+        description:
+          type: string
+          description: Resource server description
+          example: "Main API server"
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Allowed scopes for this resource
+          example: ["read", "write", "admin"]
+
+    UpdateResourceRequest:
+      type: object
+      description: Request body for updating a resource server
+      example:
+        name: "Updated API Name"
+        description: "Updated description"
+        scopes: ["read", "write", "admin", "delete"]
+      properties:
+        name:
+          type: string
+          description: Resource name
+          example: "Updated API Name"
+        description:
+          type: string
+          description: Resource description
+          example: "Updated description"
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Allowed scopes
+          example: ["read", "write", "admin", "delete"]
+
+    Resource:
+      type: object
+      description: Resource server representation (RFC 8707)
+      example:
+        uri: "https://api.example.com"
+        name: "Example API"
+        description: "Main API server"
+        scopes: ["read", "write", "admin"]
+        created_at: "2026-06-16T10:00:00Z"
+      properties:
+        uri:
+          type: string
+          description: Resource server URI (used as audience in tokens)
+          example: "https://api.example.com"
+        name:
+          type: string
+          description: Human-readable resource name
+          example: "Example API"
+        description:
+          type: string
+          description: Resource description
+          example: "Main API server"
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Allowed scopes for this resource
+          example: ["read", "write", "admin"]
+        created_at:
+          type: string
+          format: date-time
+          description: Registration timestamp
+          example: "2026-06-16T10:00:00Z"
+
+    # ── Consent ──
+
+    Consent:
+      type: object
+      description: User consent record
+      example:
+        id: "c1o2n3s4-e5n6-t789-abcd-ef1234567890"
+        user_id: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
+        client_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        scopes: ["openid", "profile", "email"]
+        granted_at: "2026-06-16T10:00:00Z"
+      properties:
+        id:
+          type: string
+          description: Unique consent identifier
+          example: "c1o2n3s4-e5n6-t789-abcd-ef1234567890"
+        user_id:
+          type: string
+          description: User who granted consent
+          example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
+        client_id:
+          type: string
+          description: Client that received consent
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Granted scopes
+          example: ["openid", "profile", "email"]
+        granted_at:
+          type: string
+          format: date-time
+          description: When consent was granted
+          example: "2026-06-16T10:00:00Z"
+        expires_at:
+          type: string
+          format: date-time
+          description: When consent expires (null for no expiration)
+
     # ── OIDC ──
 
     OIDCDiscovery:
@@ -2013,13 +2665,23 @@ components:
           items:
             type: string
           description: Supported scopes
-          example: ["openid", "profile", "email", "address", "phone", "offline_access"]
+          example:
+            ["openid", "profile", "email", "address", "phone", "offline_access"]
         response_types_supported:
           type: array
           items:
             type: string
           description: Supported response types
-          example: ["code", "token", "id_token", "code id_token", "code token", "code id_token token", "none"]
+          example:
+            [
+              "code",
+              "token",
+              "id_token",
+              "code id_token",
+              "code token",
+              "code id_token token",
+              "none",
+            ]
         response_modes_supported:
           type: array
           items:
@@ -2031,13 +2693,27 @@ components:
           items:
             type: string
           description: Supported grant types
-          example: ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:openid:params:grant-type:ciba"]
+          example:
+            [
+              "authorization_code",
+              "client_credentials",
+              "refresh_token",
+              "urn:ietf:params:oauth:grant-type:device_code",
+              "urn:openid:params:grant-type:ciba",
+            ]
         token_endpoint_auth_methods_supported:
           type: array
           items:
             type: string
           description: Supported client authentication methods
-          example: ["client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt", "none"]
+          example:
+            [
+              "client_secret_basic",
+              "client_secret_post",
+              "client_secret_jwt",
+              "private_key_jwt",
+              "none",
+            ]
         token_endpoint_auth_signing_alg_values_supported:
           type: array
           items:
@@ -2067,7 +2743,20 @@ components:
           items:
             type: string
           description: Supported claims in ID tokens and UserInfo
-          example: ["sub", "name", "given_name", "family_name", "preferred_username", "email", "email_verified", "phone_number", "picture", "locale", "updated_at"]
+          example:
+            [
+              "sub",
+              "name",
+              "given_name",
+              "family_name",
+              "preferred_username",
+              "email",
+              "email_verified",
+              "phone_number",
+              "picture",
+              "locale",
+              "updated_at",
+            ]
         claims_parameter_supported:
           type: boolean
           description: Whether the claims parameter is supported

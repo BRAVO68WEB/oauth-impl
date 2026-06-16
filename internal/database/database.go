@@ -78,6 +78,8 @@ func (db *DB) Migrate() error {
 			user_id TEXT NOT NULL,
 			redirect_uri TEXT NOT NULL,
 			scopes TEXT,
+			resource TEXT,
+			nonce TEXT,
 			code_challenge TEXT,
 			code_challenge_method TEXT,
 			expires_at DATETIME NOT NULL,
@@ -92,6 +94,7 @@ func (db *DB) Migrate() error {
 			scopes TEXT,
 			token_type TEXT DEFAULT 'Bearer',
 			dpop_jkt TEXT,
+			cert_thumbprint TEXT,
 			expires_at DATETIME NOT NULL,
 			revoked INTEGER DEFAULT 0,
 			FOREIGN KEY (client_id) REFERENCES clients(id)
@@ -155,12 +158,58 @@ func (db *DB) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_authorization_codes_client ON authorization_codes(client_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_device_codes_status ON device_codes(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_ciba_requests_status ON ciba_requests(status)`,
+
+		// Consent persistence
+		`CREATE TABLE IF NOT EXISTS consents (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			client_id TEXT NOT NULL,
+			scopes TEXT NOT NULL,
+			granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME,
+			FOREIGN KEY (user_id) REFERENCES users(id),
+			FOREIGN KEY (client_id) REFERENCES clients(id)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_consents_user_client ON consents(user_id, client_id)`,
+
+		// Custom scope definitions
+		`CREATE TABLE IF NOT EXISTS scopes (
+			name TEXT PRIMARY KEY,
+			description TEXT,
+			resource_server TEXT,
+			is_default INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Resource servers (RFC 8707)
+		`CREATE TABLE IF NOT EXISTS resources (
+			uri TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT,
+			scopes TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, migration := range migrations {
 		if _, err := db.conn.Exec(migration); err != nil {
 			return fmt.Errorf("failed to execute migration: %w", err)
 		}
+	}
+
+	// Safe ALTER TABLE migrations (ignore "duplicate column" errors)
+	alters := []string{
+		`ALTER TABLE access_tokens ADD COLUMN resource TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN resource TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN nonce TEXT`,
+		`ALTER TABLE refresh_tokens ADD COLUMN resource TEXT`,
+		`ALTER TABLE users ADD COLUMN last_login_at DATETIME`,
+		`ALTER TABLE clients ADD COLUMN jwks TEXT`,
+		`ALTER TABLE clients ADD COLUMN jwks_uri TEXT`,
+		`ALTER TABLE clients ADD COLUMN request_object_signing_alg TEXT`,
+	}
+	for _, alter := range alters {
+		_, _ = db.conn.Exec(alter)
 	}
 
 	return nil

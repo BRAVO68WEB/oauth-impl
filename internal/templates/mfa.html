@@ -26,6 +26,10 @@
         <input type="hidden" name="nonce" value="{{.Nonce}}">
         <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
         <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
+        <input type="hidden" name="request_uri" value="{{.RequestURI}}">
+        <input type="hidden" name="prompt" value="{{.Prompt}}">
+        <input type="hidden" name="login_hint" value="{{.LoginHint}}">
+        <input type="hidden" name="resource" value="{{.Resource}}">
         <div class="form-group">
             <label for="code">Verification Code</label>
             <input type="text" id="code" name="code" maxlength="6" pattern="[0-9]{6}" required autofocus autocomplete="one-time-code">

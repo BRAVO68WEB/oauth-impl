@@ -93,6 +93,33 @@ func (r *TokenRepository) RevokeRefreshToken(token string) error {
 	return err
 }
 
+func (r *TokenRepository) GetRefreshTokenByAccessToken(accessToken string) (*models.RefreshToken, error) {
+	query := `SELECT token, access_token, client_id, user_id, scopes, expires_at, revoked
+		FROM refresh_tokens WHERE access_token = ?`
+
+	rt := &models.RefreshToken{}
+	var scopes string
+
+	err := r.db.QueryRow(query, accessToken).Scan(
+		&rt.Token, &rt.AccessToken, &rt.ClientID,
+		&rt.UserID, &scopes, &rt.ExpiresAt, &rt.Revoked,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal([]byte(scopes), &rt.Scopes); err != nil {
+		return nil, err
+	}
+	return rt, nil
+}
+
+func (r *TokenRepository) RevokeAllForClient(clientID, userID string) error {
+	_, _ = r.db.Exec("UPDATE access_tokens SET revoked = 1 WHERE client_id = ? AND user_id = ?", clientID, userID)
+	_, _ = r.db.Exec("UPDATE refresh_tokens SET revoked = 1 WHERE client_id = ? AND user_id = ?", clientID, userID)
+	return nil
+}
+
 func (r *TokenRepository) ListAccessTokens(clientID, userID string) ([]*models.AccessToken, error) {
 	query := `SELECT token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked
 		FROM access_tokens WHERE 1=1`

@@ -63,3 +63,9 @@ testdata/
 *.bak
 oauth-server
 !oauth-server/
+oauth-cli
+!oauth-cli/
+oauth-mobile
+!oauth-mobile/
+certs/
+keys/

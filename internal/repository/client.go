@@ -25,8 +25,9 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		token_endpoint_auth_method, dpop_bound_access_tokens,
 		require_pushed_authorization_requests, backchannel_token_delivery_mode,
 		backchannel_client_notification_endpoint, backchannel_authentication_request_signing_alg,
+		jwks, jwks_uri, request_object_signing_alg,
 		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
 		client.ID, client.Secret, client.Name,
@@ -34,6 +35,7 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
 		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
 		client.BackchannelClientNotificationEndpoint, client.BackchannelAuthenticationRequestSigningAlg,
+		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		client.CreatedAt, client.UpdatedAt,
 	)
 	return err
@@ -44,11 +46,13 @@ func (r *ClientRepository) GetByID(id string) (*models.Client, error) {
 		token_endpoint_auth_method, dpop_bound_access_tokens,
 		require_pushed_authorization_requests, backchannel_token_delivery_mode,
 		backchannel_client_notification_endpoint, backchannel_authentication_request_signing_alg,
+		jwks, jwks_uri, request_object_signing_alg,
 		created_at, updated_at
 		FROM clients WHERE id = ?`
 
 	client := &models.Client{}
 	var redirectURIs, grantTypes, scopes string
+	var jwks, jwksUri, reqObjAlg sql.NullString
 
 	err := r.db.QueryRow(query, id).Scan(
 		&client.ID, &client.Secret, &client.Name,
@@ -56,10 +60,21 @@ func (r *ClientRepository) GetByID(id string) (*models.Client, error) {
 		&client.TokenEndpointAuthMethod, &client.DPoPBoundAccessTokens,
 		&client.RequirePushedAuthorizationRequests, &client.BackchannelTokenDeliveryMode,
 		&client.BackchannelClientNotificationEndpoint, &client.BackchannelAuthenticationRequestSigningAlg,
+		&jwks, &jwksUri, &reqObjAlg,
 		&client.CreatedAt, &client.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if jwks.Valid {
+		client.JWKS = jwks.String
+	}
+	if jwksUri.Valid {
+		client.JWKSUri = jwksUri.String
+	}
+	if reqObjAlg.Valid {
+		client.RequestObjectSigningAlg = reqObjAlg.String
 	}
 
 	if err := json.Unmarshal([]byte(redirectURIs), &client.RedirectURIs); err != nil {
@@ -80,6 +95,7 @@ func (r *ClientRepository) List() ([]*models.Client, error) {
 		token_endpoint_auth_method, dpop_bound_access_tokens,
 		require_pushed_authorization_requests, backchannel_token_delivery_mode,
 		backchannel_client_notification_endpoint, backchannel_authentication_request_signing_alg,
+		jwks, jwks_uri, request_object_signing_alg,
 		created_at, updated_at
 		FROM clients ORDER BY created_at DESC`
 
@@ -93,6 +109,7 @@ func (r *ClientRepository) List() ([]*models.Client, error) {
 	for rows.Next() {
 		client := &models.Client{}
 		var redirectURIs, grantTypes, scopes string
+		var jwks, jwksUri, reqObjAlg sql.NullString
 
 		err := rows.Scan(
 			&client.ID, &client.Secret, &client.Name,
@@ -100,10 +117,21 @@ func (r *ClientRepository) List() ([]*models.Client, error) {
 			&client.TokenEndpointAuthMethod, &client.DPoPBoundAccessTokens,
 			&client.RequirePushedAuthorizationRequests, &client.BackchannelTokenDeliveryMode,
 			&client.BackchannelClientNotificationEndpoint, &client.BackchannelAuthenticationRequestSigningAlg,
+			&jwks, &jwksUri, &reqObjAlg,
 			&client.CreatedAt, &client.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if jwks.Valid {
+			client.JWKS = jwks.String
+		}
+		if jwksUri.Valid {
+			client.JWKSUri = jwksUri.String
+		}
+		if reqObjAlg.Valid {
+			client.RequestObjectSigningAlg = reqObjAlg.String
 		}
 
 		if err := json.Unmarshal([]byte(redirectURIs), &client.RedirectURIs); err != nil {
@@ -130,6 +158,7 @@ func (r *ClientRepository) Update(client *models.Client) error {
 		token_endpoint_auth_method=?, dpop_bound_access_tokens=?,
 		require_pushed_authorization_requests=?, backchannel_token_delivery_mode=?,
 		backchannel_client_notification_endpoint=?, backchannel_authentication_request_signing_alg=?,
+		jwks=?, jwks_uri=?, request_object_signing_alg=?,
 		updated_at=?
 		WHERE id=?`
 
@@ -138,6 +167,7 @@ func (r *ClientRepository) Update(client *models.Client) error {
 		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
 		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
 		client.BackchannelClientNotificationEndpoint, client.BackchannelAuthenticationRequestSigningAlg,
+		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		time.Now(), client.ID,
 	)
 	return err

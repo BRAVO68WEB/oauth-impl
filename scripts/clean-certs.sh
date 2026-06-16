@@ -1,14 +1,37 @@
+#!/bin/bash
+set -e
+
+CERT_DIR="$(cd "$(dirname "$0")/.." && pwd)/certs"
+CONFIG_FILE="$(cd "$(dirname "$0")/.." && pwd)/config.yaml"
+
+echo "=== Cleaning certificates and resetting config ==="
+
+if [ -d "$CERT_DIR" ]; then
+    rm -rf "$CERT_DIR"
+    echo "✓ Removed certs/ directory"
+fi
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    sudo security delete-certificate -c "OAuth Test CA" /Library/Keychains/System.keychain 2>/dev/null || true
+    echo "✓ Removed CA from macOS keychain"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    sudo rm -f /usr/local/share/ca-certificates/oauth-test-ca.crt
+    sudo update-ca-certificates 2>/dev/null || true
+    echo "✓ Removed CA from Linux trust store"
+fi
+
+cat > "$CONFIG_FILE" << EOF
 # OAuth Implementation Server Configuration
 server:
   host: "0.0.0.0"
-  port: 8443
+  port: 8080
   tls:
-    enabled: true
-    cert_file: "./certs/server.crt"
-    key_file: "./certs/server.key"
-    client_ca: "./certs/ca.crt"
-    client_auth: "request" # none, request, require, require_and_verify
-    crl_file: "./certs/crl.pem"
+    enabled: false
+    cert_file: ""
+    key_file: ""
+    client_ca: ""
+    client_auth: "none"
+    crl_file: ""
 
 database:
   path: "./oauth.db"
@@ -23,7 +46,7 @@ security:
   request_uri_lifetime: 60s
   require_pkce: false
   allow_plain_pkce: true
-  issuer: "https://localhost:8443"
+  issuer: "http://localhost:8080"
   mfa:
     enabled: false
     required: false
@@ -31,13 +54,13 @@ security:
     digits: 6
     period: 30
   mtls:
-    enabled: true
-    cert_binding: true # Bind tokens to client certs
+    enabled: false
+    cert_binding: false
     bind_refresh_token: false
-    require_for_token: false # Require mTLS for token endpoint
+    require_for_token: false
   dpop:
-    enabled: true
-    proof_lifetime: 300 # 5 minutes
+    enabled: false
+    proof_lifetime: 300
     nonce_required: false
     nonce_lifetime: 300
 
@@ -47,7 +70,7 @@ queue:
   max_pending: 100
 
 oidc:
-  issuer: "https://localhost:8443"
+  issuer: "http://localhost:8080"
   supported_scopes:
     - openid
     - profile
@@ -55,30 +78,14 @@ oidc:
     - address
     - phone
     - offline_access
-    - read
-    - write
-    - admin
   supported_claims:
     - sub
     - name
     - given_name
     - family_name
-    - middle_name
-    - nickname
-    - preferred_username
-    - profile
-    - picture
-    - website
     - email
     - email_verified
-    - gender
-    - birthdate
-    - zoneinfo
-    - locale
-    - phone_number
-    - phone_number_verified
-    - address
-    - updated_at
+    - preferred_username
   supported_grant_types:
     - authorization_code
     - client_credentials
@@ -93,5 +100,8 @@ oidc:
     - client_secret_jwt
     - private_key_jwt
     - none
-    - tls_client_auth
-    - self_signed_tls_client_auth
+EOF
+
+echo "✓ Reset config.yaml to HTTP mode"
+echo ""
+echo "Done! Server will run on http://localhost:8080"

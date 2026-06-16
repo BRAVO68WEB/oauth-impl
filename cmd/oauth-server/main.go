@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -65,6 +67,12 @@ func main() {
 	userRepo := repository.NewUserRepository(conn)
 	tokenRepo := repository.NewTokenRepository(conn)
 	authCodeRepo := repository.NewAuthCodeRepository(conn)
+	deviceRepo := repository.NewDeviceCodeRepository(conn)
+	cibaRepo := repository.NewCIBARepository(conn)
+	parRepo := repository.NewPARRepository(conn)
+	consentRepo := repository.NewConsentRepository(conn)
+	scopeRepo := repository.NewScopeRepository(conn)
+	resourceRepo := repository.NewResourceRepository(conn)
 
 	// OIDC handler (generates RSA + EC keys on startup)
 	oidcHandler, err := oidc.NewHandler(db, cfg)
@@ -80,12 +88,24 @@ func main() {
 	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security)
 	clientSvc := service.NewClientService(clientRepo)
 	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
+	dpopSvc := service.NewDPoPService()
+	mtlsSvc := service.NewMTLSService()
+	jarSvc := service.NewJARService(cfg.Security.Issuer)
 
-	// OAuth handler (legacy, still uses database.DB directly)
-	oauthHandler := oauth.NewHandler(db, cfg, q, oidcHandler)
+	// Load CRL if configured
+	if cfg.Server.TLS.CRLFile != "" {
+		if err := mtlsSvc.SetCRLPath(cfg.Server.TLS.CRLFile); err != nil {
+			log.Printf("WARNING: Failed to load CRL: %v", err)
+		} else {
+			log.Printf("CRL loaded from %s", cfg.Server.TLS.CRLFile)
+		}
+	}
+
+	// OAuth handler
+	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler)
 
 	// Controllers
-	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc)
+	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo)
 	webCtrl, err := controller.NewWebController(userSvc, totpSvc, cfg, root.TemplateFS, oauthHandler)
 	if err != nil {
 		log.Fatalf("Failed to create web controller: %v", err)
@@ -94,6 +114,40 @@ func main() {
 	// Router
 	router := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, root.OpenAPISpec, root.TemplateFS)
 
+	// Build TLS config
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+		},
+	}
+
+	if cfg.Server.TLS.Enabled && cfg.Server.TLS.ClientCA != "" {
+		caCert, err := os.ReadFile(cfg.Server.TLS.ClientCA)
+		if err != nil {
+			log.Fatalf("Failed to read client CA: %v", err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		tlsConfig.ClientCAs = caCertPool
+
+		switch cfg.Server.TLS.ClientAuth {
+		case "require_and_verify":
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		case "require":
+			tlsConfig.ClientAuth = tls.RequireAnyClientCert
+		case "request":
+			tlsConfig.ClientAuth = tls.RequestClientCert
+		default:
+			tlsConfig.ClientAuth = tls.NoClientCert
+		}
+	}
+
 	// HTTP server
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
@@ -101,16 +155,25 @@ func main() {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
+		TLSConfig:    tlsConfig,
+	}
+
+	protocol := "http"
+	if cfg.Server.TLS.Enabled {
+		protocol = "https"
 	}
 
 	fmt.Printf(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                    OAuth Implementation Server               ║
 ╠══════════════════════════════════════════════════════════════╣
-║  Server:      http://%s:%d                           ║
+║  Server:      %s://%s:%-25s ║
 ║  Database:    %-46s ║
 ║  Queue:       %-46s ║
 ║  MFA:         %-46s ║
+║  TLS:         %-46s ║
+║  mTLS:        %-46s ║
+║  DPoP:        %-46s ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Endpoints:
@@ -155,11 +218,13 @@ Endpoints:
   Health:
     GET  /health
 
-`, cfg.Server.Host, cfg.Server.Port, cfg.Database.Path, cfg.Queue.Type, mfaStatus(cfg))
+`, protocol, cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port),
+		cfg.Database.Path, cfg.Queue.Type, mfaStatus(cfg),
+		tlsStatus(cfg), mtlsStatus(cfg), dpopStatus(cfg))
 
 	// Start server
 	go func() {
-		log.Printf("Starting OAuth server on %s", httpServer.Addr)
+		log.Printf("Starting OAuth server on %s://%s:%d", protocol, cfg.Server.Host, cfg.Server.Port)
 		if cfg.Server.TLS.Enabled {
 			if err := httpServer.ListenAndServeTLS(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("Server failed: %v", err)
@@ -188,4 +253,25 @@ func mfaStatus(cfg *config.Config) string {
 		return "enabled (optional)"
 	}
 	return "disabled"
+}
+
+func tlsStatus(cfg *config.Config) string {
+	if !cfg.Server.TLS.Enabled {
+		return "disabled"
+	}
+	return fmt.Sprintf("enabled (cert: %s)", cfg.Server.TLS.CertFile)
+}
+
+func mtlsStatus(cfg *config.Config) string {
+	if !cfg.Security.MTLS.Enabled {
+		return "disabled"
+	}
+	return fmt.Sprintf("enabled (client_auth: %s)", cfg.Server.TLS.ClientAuth)
+}
+
+func dpopStatus(cfg *config.Config) string {
+	if !cfg.Security.DPoP.Enabled {
+		return "disabled"
+	}
+	return fmt.Sprintf("enabled (nonce_required: %v)", cfg.Security.DPoP.NonceRequired)
 }
