@@ -2,9 +2,16 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
@@ -36,6 +43,10 @@ func main() {
 		cibaCmd(),
 		flowCmd(),
 		mfaCmd(),
+		scopeCmd(),
+		resourceCmd(),
+		consentCmd(),
+		keysCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -229,7 +240,79 @@ func clientCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(listCmd, createCmd, getCmd, deleteCmd)
+	masterCmd := &cobra.Command{
+		Use:   "master",
+		Short: "Create a master client with all permissions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := map[string]interface{}{
+				"name": "Master Client",
+				"redirect_uris": []string{
+					"https://localhost/Callback",
+					"http://localhost:3000/callback",
+					"http://localhost:8080/callback",
+				},
+				"grant_types": []string{
+					"authorization_code",
+					"client_credentials",
+					"refresh_token",
+					"password",
+					"urn:ietf:params:oauth:grant-type:device_code",
+					"urn:openid:params:grant-type:ciba",
+					"urn:ietf:params:oauth:grant-type:token-exchange",
+				},
+				"scopes": []string{
+					"openid", "profile", "email", "address", "phone", "offline_access",
+					"read", "write", "admin",
+				},
+				"token_endpoint_auth_method":            "client_secret_basic",
+				"dpop_bound_access_tokens":              false,
+				"require_pushed_authorization_requests": false,
+				"backchannel_token_delivery_mode":       "poll",
+			}
+
+			jsonBody, _ := json.Marshal(body)
+			resp, err := http.Post(serverURL+"/api/clients", "application/json", bytes.NewBuffer(jsonBody))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			var result map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				errMsg := result["error_description"]
+				if errMsg == nil {
+					errMsg = result["error"]
+				}
+				return fmt.Errorf("failed to create master client: %v", errMsg)
+			}
+
+			fmt.Println("╔══════════════════════════════════════════════════════════════╗")
+			fmt.Println("║                    Master Client Created                     ║")
+			fmt.Println("╠══════════════════════════════════════════════════════════════╣")
+			fmt.Printf("║  Client ID:     %-44s ║\n", result["id"])
+			fmt.Printf("║  Client Secret: %-44s ║\n", result["secret"])
+			fmt.Println("╠══════════════════════════════════════════════════════════════╣")
+			fmt.Println("║  Grant Types:                                               ║")
+			fmt.Println("║    • authorization_code                                      ║")
+			fmt.Println("║    • client_credentials                                      ║")
+			fmt.Println("║    • refresh_token                                           ║")
+			fmt.Println("║    • password                                                ║")
+			fmt.Println("║    • device_code (RFC 8628)                                  ║")
+			fmt.Println("║    • ciba                                                    ║")
+			fmt.Println("║    • token_exchange (RFC 8693)                               ║")
+			fmt.Println("╠══════════════════════════════════════════════════════════════╣")
+			fmt.Println("║  Scopes: openid profile email address phone offline_access   ║")
+			fmt.Println("║          read write admin                                    ║")
+			fmt.Println("╚══════════════════════════════════════════════════════════════╝")
+			return nil
+		},
+	}
+
+	cmd.AddCommand(listCmd, createCmd, getCmd, deleteCmd, masterCmd)
 	return cmd
 }
 
@@ -924,4 +1007,523 @@ func mfaCmd() *cobra.Command {
 
 	cmd.AddCommand(enableCmd, verifyCmd, statusCmd)
 	return cmd
+}
+
+func scopeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "scope",
+		Short: "Scope management commands",
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all scopes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := http.Get(serverURL + "/api/scopes")
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			var scopes []map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&scopes); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(w, "NAME\tDESCRIPTION\tRESOURCE SERVER\tDEFAULT\n")
+			for _, s := range scopes {
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%v\n",
+					s["name"], s["description"], s["resource_server"], s["is_default"])
+			}
+			_ = w.Flush()
+			return nil
+		},
+	}
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new scope",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, _ := cmd.Flags().GetString("name")
+			description, _ := cmd.Flags().GetString("description")
+			resourceServer, _ := cmd.Flags().GetString("resource-server")
+			isDefault, _ := cmd.Flags().GetBool("default")
+
+			if name == "" {
+				return fmt.Errorf("name is required")
+			}
+
+			body := map[string]interface{}{
+				"name":            name,
+				"description":     description,
+				"resource_server": resourceServer,
+				"is_default":      isDefault,
+			}
+
+			jsonBody, _ := json.Marshal(body)
+			resp, err := http.Post(serverURL+"/api/scopes", "application/json", bytes.NewBuffer(jsonBody))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			var result map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				errMsg := result["error_description"]
+				if errMsg == nil {
+					errMsg = result["error"]
+				}
+				return fmt.Errorf("failed to create scope: %v", errMsg)
+			}
+
+			fmt.Printf("Scope created: %s\n", result["name"])
+			return nil
+		},
+	}
+
+	createCmd.Flags().StringP("name", "n", "", "Scope name")
+	createCmd.Flags().StringP("description", "d", "", "Scope description")
+	createCmd.Flags().String("resource-server", "", "Resource server URI")
+	createCmd.Flags().Bool("default", false, "Is default scope")
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete [name]",
+		Short: "Delete a scope",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req, err := http.NewRequest("DELETE", serverURL+"/api/scopes/"+args[0], nil)
+			if err != nil {
+				return err
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			fmt.Printf("Scope deleted: %s\n", args[0])
+			return nil
+		},
+	}
+
+	cmd.AddCommand(listCmd, createCmd, deleteCmd)
+	return cmd
+}
+
+func resourceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "resource",
+		Short: "Resource server management commands",
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all resource servers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := http.Get(serverURL + "/api/resources")
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			var resources []map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&resources); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(w, "URI\tNAME\tDESCRIPTION\tSCOPES\n")
+			for _, r := range resources {
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%v\n",
+					r["uri"], r["name"], r["description"], r["scopes"])
+			}
+			_ = w.Flush()
+			return nil
+		},
+	}
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Register a resource server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			uri, _ := cmd.Flags().GetString("uri")
+			name, _ := cmd.Flags().GetString("name")
+			description, _ := cmd.Flags().GetString("description")
+			scopes, _ := cmd.Flags().GetStringSlice("scopes")
+
+			if uri == "" || name == "" {
+				return fmt.Errorf("uri and name are required")
+			}
+
+			body := map[string]interface{}{
+				"uri":         uri,
+				"name":        name,
+				"description": description,
+				"scopes":      scopes,
+			}
+
+			jsonBody, _ := json.Marshal(body)
+			resp, err := http.Post(serverURL+"/api/resources", "application/json", bytes.NewBuffer(jsonBody))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			var result map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			if resp.StatusCode != http.StatusCreated {
+				errMsg := result["error_description"]
+				if errMsg == nil {
+					errMsg = result["error"]
+				}
+				return fmt.Errorf("failed to create resource: %v", errMsg)
+			}
+
+			fmt.Printf("Resource registered: %s\n", result["uri"])
+			return nil
+		},
+	}
+
+	createCmd.Flags().StringP("uri", "u", "", "Resource URI (e.g., https://api.example.com)")
+	createCmd.Flags().StringP("name", "n", "", "Resource name")
+	createCmd.Flags().StringP("description", "d", "", "Resource description")
+	createCmd.Flags().StringSliceP("scopes", "s", []string{}, "Allowed scopes")
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete [uri]",
+		Short: "Delete a resource server",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req, err := http.NewRequest("DELETE", serverURL+"/api/resources/"+args[0], nil)
+			if err != nil {
+				return err
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			fmt.Printf("Resource deleted: %s\n", args[0])
+			return nil
+		},
+	}
+
+	cmd.AddCommand(listCmd, createCmd, deleteCmd)
+	return cmd
+}
+
+func consentCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "consent",
+		Short: "Consent management commands",
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List consents for a user",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			userID, _ := cmd.Flags().GetString("user-id")
+			if userID == "" {
+				return fmt.Errorf("user-id is required")
+			}
+
+			resp, err := http.Get(serverURL + "/api/consents?user_id=" + userID)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			var consents []map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&consents); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(w, "CLIENT ID\tSCOPES\tGRANTED AT\n")
+			for _, c := range consents {
+				_, _ = fmt.Fprintf(w, "%s\t%v\t%s\n",
+					c["client_id"], c["scopes"], c["granted_at"])
+			}
+			_ = w.Flush()
+			return nil
+		},
+	}
+
+	listCmd.Flags().String("user-id", "", "User ID")
+
+	revokeCmd := &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke consent for a user and client",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			userID, _ := cmd.Flags().GetString("user-id")
+			clientID, _ := cmd.Flags().GetString("client-id")
+
+			if userID == "" || clientID == "" {
+				return fmt.Errorf("user-id and client-id are required")
+			}
+
+			req, err := http.NewRequest("DELETE", serverURL+"/api/consents?user_id="+userID+"&client_id="+clientID, nil)
+			if err != nil {
+				return err
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			fmt.Printf("Consent revoked for user %s and client %s\n", userID, clientID)
+			return nil
+		},
+	}
+
+	revokeCmd.Flags().String("user-id", "", "User ID")
+	revokeCmd.Flags().String("client-id", "", "Client ID")
+
+	cmd.AddCommand(listCmd, revokeCmd)
+	return cmd
+}
+
+func keysCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "keys",
+		Short: "Key generation commands for OAuch conformance",
+	}
+
+	generateCmd := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate DPoP and client signing keys for OAuch",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputDir, _ := cmd.Flags().GetString("output")
+			dpopOnly, _ := cmd.Flags().GetBool("dpop-only")
+			clientOnly, _ := cmd.Flags().GetBool("client-only")
+
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				return fmt.Errorf("failed to create output directory: %w", err)
+			}
+
+			generateAll := !dpopOnly && !clientOnly
+
+			if generateAll || dpopOnly {
+				if err := generateDPoPKey(outputDir); err != nil {
+					return fmt.Errorf("failed to generate DPoP key: %w", err)
+				}
+			}
+
+			if generateAll || clientOnly {
+				if err := generateClientKey(outputDir); err != nil {
+					return fmt.Errorf("failed to generate client key: %w", err)
+				}
+			}
+
+			if generateAll {
+				if err := generateOAuchConfig(outputDir); err != nil {
+					return fmt.Errorf("failed to generate OAuch config: %w", err)
+				}
+			}
+
+			fmt.Printf("Keys generated in: %s\n", outputDir)
+			fmt.Println()
+			fmt.Println("Files:")
+			if generateAll || dpopOnly {
+				fmt.Printf("  DPoP Private Key:  %s/dpop-private.jwk\n", outputDir)
+				fmt.Printf("  DPoP Public Key:   %s/dpop-public.jwk\n", outputDir)
+				fmt.Printf("  DPoP Private PEM:  %s/dpop-private.pem\n", outputDir)
+			}
+			if generateAll || clientOnly {
+				fmt.Printf("  Client Private:    %s/client-private.jwk\n", outputDir)
+				fmt.Printf("  Client Public:     %s/client-public.jwk\n", outputDir)
+				fmt.Printf("  Client Private PEM:%s/client-private.pem\n", outputDir)
+				fmt.Printf("  Client JWKS:       %s/client-jwks.json\n", outputDir)
+			}
+			if generateAll {
+				fmt.Printf("  OAuch Config:      %s/oauch-config.json\n", outputDir)
+				fmt.Println()
+				fmt.Println("Paste the contents of oauch-config.json into your OAuch site settings.")
+			}
+			return nil
+		},
+	}
+
+	generateCmd.Flags().StringP("output", "o", "./keys", "Output directory")
+	generateCmd.Flags().Bool("dpop-only", false, "Generate only DPoP key")
+	generateCmd.Flags().Bool("client-only", false, "Generate only client signing key")
+
+	cmd.AddCommand(generateCmd)
+	return cmd
+}
+
+type jwkKey struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv,omitempty"`
+	D   string `json:"d,omitempty"`
+	X   string `json:"x,omitempty"`
+	Y   string `json:"y,omitempty"`
+	E   string `json:"e,omitempty"`
+	N   string `json:"n,omitempty"`
+	P   string `json:"p,omitempty"`
+	Q   string `json:"q,omitempty"`
+	Dp  string `json:"dp,omitempty"`
+	Dq  string `json:"dq,omitempty"`
+	Qi  string `json:"qi,omitempty"`
+	Kid string `json:"kid,omitempty"`
+	Use string `json:"use,omitempty"`
+	Alg string `json:"alg,omitempty"`
+}
+
+type jwks struct {
+	Keys []jwkKey `json:"keys"`
+}
+
+func b64(b []byte) string {
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func generateDPoPKey(dir string) error {
+	fmt.Println("Generating DPoP EC P-256 key...")
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	// Use ECDH API to get key bytes (non-deprecated in Go 1.26)
+	ecdhKey, _ := key.ECDH()
+	pubBytes := ecdhKey.PublicKey().Bytes()
+	x := b64(pubBytes[1:33])
+	y := b64(pubBytes[33:65])
+
+	privBytes := ecdhKey.Bytes()
+	d := b64(privBytes)
+
+	privJWK := jwkKey{
+		Kty: "EC",
+		Crv: "P-256",
+		D:   d,
+		X:   x,
+		Y:   y,
+		Kid: "dpop-key-1",
+		Use: "sig",
+		Alg: "ES256",
+	}
+
+	pubJWK := jwkKey{
+		Kty: "EC",
+		Crv: "P-256",
+		X:   x,
+		Y:   y,
+		Kid: "dpop-key-1",
+		Use: "sig",
+		Alg: "ES256",
+	}
+
+	privJSON, _ := json.MarshalIndent(privJWK, "", "  ")
+	pubJSON, _ := json.MarshalIndent(pubJWK, "", "  ")
+
+	if err := os.WriteFile(dir+"/dpop-private.jwk", privJSON, 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dir+"/dpop-public.jwk", pubJSON, 0644); err != nil {
+		return err
+	}
+
+	privPEM, _ := x509.MarshalECPrivateKey(key)
+	if err := os.WriteFile(dir+"/dpop-private.pem", pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privPEM}), 0600); err != nil {
+		return err
+	}
+
+	fmt.Println("  ✓ DPoP key generated")
+	return nil
+}
+
+func generateClientKey(dir string) error {
+	fmt.Println("Generating Client RSA 2048 key...")
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	privJWK := jwkKey{
+		Kty: "RSA",
+		E:   b64(big.NewInt(int64(key.E)).Bytes()),
+		N:   b64(key.N.Bytes()),
+		D:   b64(key.D.Bytes()),
+		P:   b64(key.Primes[0].Bytes()),
+		Q:   b64(key.Primes[1].Bytes()),
+		Dp:  b64(key.Precomputed.Dp.Bytes()),
+		Dq:  b64(key.Precomputed.Dq.Bytes()),
+		Qi:  b64(key.Precomputed.Qinv.Bytes()),
+		Kid: "client-key-1",
+		Use: "sig",
+		Alg: "RS256",
+	}
+
+	pubJWK := jwkKey{
+		Kty: "RSA",
+		E:   b64(big.NewInt(int64(key.E)).Bytes()),
+		N:   b64(key.N.Bytes()),
+		Kid: "client-key-1",
+		Use: "sig",
+		Alg: "RS256",
+	}
+
+	privJSON, _ := json.MarshalIndent(privJWK, "", "  ")
+	pubJSON, _ := json.MarshalIndent(pubJWK, "", "  ")
+
+	if err := os.WriteFile(dir+"/client-private.jwk", privJSON, 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dir+"/client-public.jwk", pubJSON, 0644); err != nil {
+		return err
+	}
+
+	privPEM := x509.MarshalPKCS1PrivateKey(key)
+	if err := os.WriteFile(dir+"/client-private.pem", pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: privPEM}), 0600); err != nil {
+		return err
+	}
+
+	jwksJSON, _ := json.MarshalIndent(jwks{Keys: []jwkKey{pubJWK}}, "", "  ")
+	if err := os.WriteFile(dir+"/client-jwks.json", jwksJSON, 0644); err != nil {
+		return err
+	}
+
+	fmt.Println("  ✓ Client signing key generated")
+	return nil
+}
+
+func generateOAuchConfig(dir string) error {
+	dpopBytes, err := os.ReadFile(dir + "/dpop-private.jwk")
+	if err != nil {
+		return err
+	}
+	clientBytes, err := os.ReadFile(dir + "/client-private.jwk")
+	if err != nil {
+		return err
+	}
+
+	var dpopKey, clientKey map[string]interface{}
+	_ = json.Unmarshal(dpopBytes, &dpopKey)
+	_ = json.Unmarshal(clientBytes, &clientKey)
+
+	config := map[string]interface{}{
+		"DPoPSigningKey":                dpopKey,
+		"RequestSigningKey":             clientKey,
+		"ClientAuthenticationMechanism": 3,
+	}
+
+	configJSON, _ := json.MarshalIndent(config, "", "  ")
+	return os.WriteFile(dir+"/oauch-config.json", configJSON, 0644)
 }

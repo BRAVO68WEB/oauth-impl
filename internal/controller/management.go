@@ -6,22 +6,38 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/service"
 )
 
 type ManagementController struct {
-	clientSvc *service.ClientService
-	userSvc   *service.UserService
-	tokenSvc  *service.TokenService
-	totpSvc   *service.TOTPService
+	clientSvc    *service.ClientService
+	userSvc      *service.UserService
+	tokenSvc     *service.TokenService
+	totpSvc      *service.TOTPService
+	scopeRepo    *repository.ScopeRepository
+	resourceRepo *repository.ResourceRepository
+	consentRepo  *repository.ConsentRepository
 }
 
-func NewManagementController(clientSvc *service.ClientService, userSvc *service.UserService, tokenSvc *service.TokenService, totpSvc *service.TOTPService) *ManagementController {
+func NewManagementController(
+	clientSvc *service.ClientService,
+	userSvc *service.UserService,
+	tokenSvc *service.TokenService,
+	totpSvc *service.TOTPService,
+	scopeRepo *repository.ScopeRepository,
+	resourceRepo *repository.ResourceRepository,
+	consentRepo *repository.ConsentRepository,
+) *ManagementController {
 	return &ManagementController{
-		clientSvc: clientSvc,
-		userSvc:   userSvc,
-		tokenSvc:  tokenSvc,
-		totpSvc:   totpSvc,
+		clientSvc:    clientSvc,
+		userSvc:      userSvc,
+		tokenSvc:     tokenSvc,
+		totpSvc:      totpSvc,
+		scopeRepo:    scopeRepo,
+		resourceRepo: resourceRepo,
+		consentRepo:  consentRepo,
 	}
 }
 
@@ -301,4 +317,223 @@ func (c *ManagementController) HandleMFADisable(w http.ResponseWriter, r *http.R
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "mfa_disabled"})
+}
+
+// ─── Scope Management ────────────────────────────────────
+
+func (c *ManagementController) HandleListScopes(w http.ResponseWriter, r *http.Request) {
+	scopes, err := c.scopeRepo.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to list scopes")
+		return
+	}
+	writeJSON(w, http.StatusOK, scopes)
+}
+
+func (c *ManagementController) HandleCreateScope(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name           string `json:"name"`
+		Description    string `json:"description"`
+		ResourceServer string `json:"resource_server"`
+		IsDefault      bool   `json:"is_default"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "name is required")
+		return
+	}
+
+	scope := &models.Scope{
+		Name:           req.Name,
+		Description:    req.Description,
+		ResourceServer: req.ResourceServer,
+		IsDefault:      req.IsDefault,
+	}
+
+	if err := c.scopeRepo.Create(scope); err != nil {
+		writeError(w, http.StatusConflict, "already_exists", "Scope already exists")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, scope)
+}
+
+func (c *ManagementController) HandleGetScope(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	scope, err := c.scopeRepo.Get(name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Scope not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, scope)
+}
+
+func (c *ManagementController) HandleDeleteScope(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+
+	if err := c.scopeRepo.Delete(name); err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to delete scope")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// ─── Resource Management ────────────────────────────────────
+
+func (c *ManagementController) HandleListResources(w http.ResponseWriter, r *http.Request) {
+	resources, err := c.resourceRepo.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to list resources")
+		return
+	}
+	writeJSON(w, http.StatusOK, resources)
+}
+
+func (c *ManagementController) HandleCreateResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URI         string   `json:"uri"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Scopes      []string `json:"scopes"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.URI == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "uri and name are required")
+		return
+	}
+
+	resource := &models.Resource{
+		URI:         req.URI,
+		Name:        req.Name,
+		Description: req.Description,
+		Scopes:      req.Scopes,
+	}
+
+	if err := c.resourceRepo.Create(resource); err != nil {
+		writeError(w, http.StatusConflict, "already_exists", "Resource already exists")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, resource)
+}
+
+func (c *ManagementController) HandleGetResource(w http.ResponseWriter, r *http.Request) {
+	uri := chi.URLParam(r, "uri")
+
+	resource, err := c.resourceRepo.Get(uri)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resource)
+}
+
+func (c *ManagementController) HandleUpdateResource(w http.ResponseWriter, r *http.Request) {
+	uri := chi.URLParam(r, "uri")
+
+	existing, err := c.resourceRepo.Get(uri)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+
+	var req struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Scopes      []string `json:"scopes"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.Description != "" {
+		existing.Description = req.Description
+	}
+	if req.Scopes != nil {
+		existing.Scopes = req.Scopes
+	}
+
+	if err := c.resourceRepo.Update(existing); err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to update resource")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, existing)
+}
+
+func (c *ManagementController) HandleDeleteResource(w http.ResponseWriter, r *http.Request) {
+	uri := chi.URLParam(r, "uri")
+
+	if err := c.resourceRepo.Delete(uri); err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to delete resource")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (c *ManagementController) HandleListResourceScopes(w http.ResponseWriter, r *http.Request) {
+	uri := chi.URLParam(r, "uri")
+
+	scopes, err := c.scopeRepo.ListByResource(uri)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to list scopes")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, scopes)
+}
+
+// ─── Consent Management ────────────────────────────────────
+
+func (c *ManagementController) HandleListConsents(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "user_id is required")
+		return
+	}
+
+	consents, err := c.consentRepo.ListByUser(userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to list consents")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, consents)
+}
+
+func (c *ManagementController) HandleRevokeConsent(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	clientID := r.URL.Query().Get("client_id")
+
+	if userID == "" || clientID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "user_id and client_id are required")
+		return
+	}
+
+	if err := c.consentRepo.Delete(userID, clientID); err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Failed to revoke consent")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

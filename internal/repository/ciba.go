@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
@@ -16,30 +17,46 @@ func NewCIBARepository(db *sql.DB) *CIBARepository {
 }
 
 func (r *CIBARepository) Save(req *models.CIBARequest) error {
-	query := `INSERT INTO ciba_requests (auth_req_id, client_id, user_id, binding_message, user_code,
-		status, delivery_mode, expires_at, interval, client_notification_token)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	scopesJSON, err := json.Marshal(req.Scopes)
+	if err != nil {
+		return err
+	}
 
-	_, err := r.db.Exec(query,
+	query := `INSERT INTO ciba_requests (auth_req_id, client_id, user_id, binding_message, user_code,
+		status, delivery_mode, expires_at, interval, client_notification_token, scopes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	_, err = r.db.Exec(query,
 		req.AuthReqID, req.ClientID, req.UserID, req.BindingMessage,
 		req.UserCode, req.Status, req.DeliveryMode, req.ExpiresAt,
-		req.Interval, req.ClientNotificationToken,
+		req.Interval, req.ClientNotificationToken, string(scopesJSON),
 	)
 	return err
 }
 
 func (r *CIBARepository) GetByID(authReqID string) (*models.CIBARequest, error) {
 	query := `SELECT auth_req_id, client_id, user_id, binding_message, user_code,
-		status, delivery_mode, expires_at, interval, client_notification_token
+		status, delivery_mode, expires_at, interval, client_notification_token, scopes
 		FROM ciba_requests WHERE auth_req_id = ?`
 
 	req := &models.CIBARequest{}
+	var scopesStr string
 	err := r.db.QueryRow(query, authReqID).Scan(
 		&req.AuthReqID, &req.ClientID, &req.UserID, &req.BindingMessage,
 		&req.UserCode, &req.Status, &req.DeliveryMode, &req.ExpiresAt,
-		&req.Interval, &req.ClientNotificationToken,
+		&req.Interval, &req.ClientNotificationToken, &scopesStr,
 	)
-	return req, err
+	if err != nil {
+		return nil, err
+	}
+
+	if scopesStr != "" {
+		if err := json.Unmarshal([]byte(scopesStr), &req.Scopes); err != nil {
+			req.Scopes = []string{}
+		}
+	}
+
+	return req, nil
 }
 
 func (r *CIBARepository) UpdateStatus(authReqID, status string) error {
@@ -49,7 +66,7 @@ func (r *CIBARepository) UpdateStatus(authReqID, status string) error {
 
 func (r *CIBARepository) GetPending() ([]*models.CIBARequest, error) {
 	query := `SELECT auth_req_id, client_id, user_id, binding_message, user_code,
-		status, delivery_mode, expires_at, interval, client_notification_token
+		status, delivery_mode, expires_at, interval, client_notification_token, scopes
 		FROM ciba_requests WHERE status = 'pending' AND expires_at > ?
 		ORDER BY expires_at DESC`
 
@@ -62,14 +79,22 @@ func (r *CIBARepository) GetPending() ([]*models.CIBARequest, error) {
 	requests := make([]*models.CIBARequest, 0)
 	for rows.Next() {
 		req := &models.CIBARequest{}
+		var scopesStr string
 		err := rows.Scan(
 			&req.AuthReqID, &req.ClientID, &req.UserID, &req.BindingMessage,
 			&req.UserCode, &req.Status, &req.DeliveryMode, &req.ExpiresAt,
-			&req.Interval, &req.ClientNotificationToken,
+			&req.Interval, &req.ClientNotificationToken, &scopesStr,
 		)
 		if err != nil {
 			return nil, err
 		}
+
+		if scopesStr != "" {
+			if err := json.Unmarshal([]byte(scopesStr), &req.Scopes); err != nil {
+				req.Scopes = []string{}
+			}
+		}
+
 		requests = append(requests, req)
 	}
 	return requests, nil

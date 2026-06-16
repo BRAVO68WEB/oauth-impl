@@ -1,0 +1,387 @@
+package service
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+type DPoPService struct {
+	usedJTIs map[string]time.Time
+	mu       sync.RWMutex
+}
+
+type DPoPProof struct {
+	jwt.RegisteredClaims
+	HTM   string `json:"htm"`
+	HTU   string `json:"htu"`
+	ATH   string `json:"ath,omitempty"`
+	Nonce string `json:"nonce,omitempty"`
+}
+
+type DPoPJWK struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+	Kid string `json:"kid,omitempty"`
+	Use string `json:"use,omitempty"`
+}
+
+func NewDPoPService() *DPoPService {
+	return &DPoPService{
+		usedJTIs: make(map[string]time.Time),
+	}
+}
+
+// ValidateDPoPProof validates a DPoP proof JWT
+func (s *DPoPService) ValidateDPoPProof(dpopHeader string, method string, uri string, accessToken string) (*DPoPProof, error) {
+	if dpopHeader == "" {
+		return nil, fmt.Errorf("DPoP header is required")
+	}
+
+	// Parse without verification first to get the header
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, _, err := parser.ParseUnverified(dpopHeader, jwt.MapClaims{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse DPoP proof: %w", err)
+	}
+
+	// Get the JWK from header
+	jwkRaw, ok := token.Header["jwk"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("missing jwk in DPoP header")
+	}
+
+	// Parse the public key
+	pubKey, err := s.parseJWK(jwkRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JWK: %w", err)
+	}
+
+	// Verify the signature
+	token, err = jwt.Parse(dpopHeader, func(t *jwt.Token) (interface{}, error) {
+		return pubKey, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("DPoP signature verification failed: %w", err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("invalid DPoP claims")
+	}
+
+	// Extract claims
+	htm, _ := claims["htm"].(string)
+	htu, _ := claims["htu"].(string)
+	jti, _ := claims["jti"].(string)
+	ath, _ := claims["ath"].(string)
+
+	// Validate required claims
+	if jti == "" {
+		return nil, fmt.Errorf("missing jti claim")
+	}
+	if htm == "" {
+		return nil, fmt.Errorf("missing htm claim")
+	}
+	if htu == "" {
+		return nil, fmt.Errorf("missing htu claim")
+	}
+
+	// Validate method
+	if htm != method {
+		return nil, fmt.Errorf("htm mismatch: expected %s, got %s", method, htm)
+	}
+
+	// Validate URI (ignore query and fragment)
+	expectedHTU := s.normalizeURI(uri)
+	actualHTU := s.normalizeURI(htu)
+	if expectedHTU != actualHTU {
+		return nil, fmt.Errorf("htu mismatch: expected %s, got %s", expectedHTU, actualHTU)
+	}
+
+	// Validate access token hash if provided
+	if accessToken != "" && ath != "" {
+		if err := s.validateATH(ath, accessToken); err != nil {
+			return nil, err
+		}
+	}
+
+	// Check for replay
+	if err := s.checkReplay(jti); err != nil {
+		return nil, err
+	}
+
+	return &DPoPProof{
+		HTM: htm,
+		HTU: htu,
+		ATH: ath,
+	}, nil
+}
+
+// CreateDPoPProof creates a DPoP proof JWT
+func (s *DPoPService) CreateDPoPProof(key *ecdsa.PrivateKey, method string, uri string, accessToken string) (string, error) {
+	jti, err := generateJTI()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate jti: %w", err)
+	}
+
+	claims := &DPoPProof{
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			ID:       jti,
+		},
+		HTM: method,
+		HTU: uri,
+	}
+
+	// Add access token hash if provided
+	if accessToken != "" {
+		claims.ATH = s.computeATH(accessToken)
+	}
+
+	// Get public key coordinates for JWK header via ECDH API
+	pubKey := &key.PublicKey
+	ecdhKey, _ := pubKey.ECDH()
+	pubBytes := ecdhKey.Bytes()
+	x := base64.RawURLEncoding.EncodeToString(pubBytes[1:33])
+	y := base64.RawURLEncoding.EncodeToString(pubBytes[33:65])
+
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token.Header["typ"] = "dpop+jwt"
+	token.Header["jwk"] = map[string]interface{}{
+		"kty": "EC",
+		"crv": "P-256",
+		"x":   x,
+		"y":   y,
+	}
+
+	return token.SignedString(key)
+}
+
+// GenerateKeyPair generates a new ECDSA P-256 key pair
+func (s *DPoPService) GenerateKeyPair() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+// GetPublicKeyThumbprint returns the JWK thumbprint of a public key
+func (s *DPoPService) GetPublicKeyThumbprint(pubKey *ecdsa.PublicKey) (string, error) {
+	// Get coordinates via ECDH API
+	ecdhKey, err := pubKey.ECDH()
+	if err != nil {
+		return "", fmt.Errorf("failed to convert to ECDH key: %w", err)
+	}
+	pubBytes := ecdhKey.Bytes()
+	x := base64.RawURLEncoding.EncodeToString(pubBytes[1:33])
+	y := base64.RawURLEncoding.EncodeToString(pubBytes[33:65])
+
+	// Create canonical JWK
+	jwk := map[string]interface{}{
+		"crv": "P-256",
+		"kty": "EC",
+		"x":   x,
+		"y":   y,
+	}
+
+	// Marshal to JSON (sorted keys)
+	jwkBytes, err := json.Marshal(jwk)
+	if err != nil {
+		return "", err
+	}
+
+	// Compute SHA-256 hash
+	hash := sha256.Sum256(jwkBytes)
+	return base64.RawURLEncoding.EncodeToString(hash[:]), nil
+}
+
+// ExportPublicKeyAsJWK exports a public key as a JWK map
+func (s *DPoPService) ExportPublicKeyAsJWK(pubKey *ecdsa.PublicKey) map[string]interface{} {
+	ecdhKey, _ := pubKey.ECDH()
+	pubBytes := ecdhKey.Bytes()
+	return map[string]interface{}{
+		"kty": "EC",
+		"crv": "P-256",
+		"x":   base64.RawURLEncoding.EncodeToString(pubBytes[1:33]),
+		"y":   base64.RawURLEncoding.EncodeToString(pubBytes[33:65]),
+	}
+}
+
+func (s *DPoPService) parseJWK(jwkRaw map[string]interface{}) (*ecdsa.PublicKey, error) {
+	kty, _ := jwkRaw["kty"].(string)
+	if kty != "EC" {
+		return nil, fmt.Errorf("unsupported key type: %s", kty)
+	}
+
+	crv, _ := jwkRaw["crv"].(string)
+	xStr, _ := jwkRaw["x"].(string)
+	yStr, _ := jwkRaw["y"].(string)
+
+	xBytes, err := base64.RawURLEncoding.DecodeString(xStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode x: %w", err)
+	}
+	yBytes, err := base64.RawURLEncoding.DecodeString(yStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode y: %w", err)
+	}
+
+	var curve elliptic.Curve
+	switch crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("unsupported curve: %s", crv)
+	}
+
+	x := new(big.Int).SetBytes(xBytes)
+	y := new(big.Int).SetBytes(yBytes)
+
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     x,
+		Y:     y,
+	}, nil
+}
+
+func (s *DPoPService) validateATH(ath string, accessToken string) error {
+	// Compute SHA-256 hash of access token
+	hash := sha256.Sum256([]byte(accessToken))
+	expectedATH := base64.RawURLEncoding.EncodeToString(hash[:])
+
+	if ath != expectedATH {
+		return fmt.Errorf("ath mismatch")
+	}
+	return nil
+}
+
+func (s *DPoPService) computeATH(accessToken string) string {
+	hash := sha256.Sum256([]byte(accessToken))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+func (s *DPoPService) checkReplay(jti string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if JTI was already used
+	if _, exists := s.usedJTIs[jti]; exists {
+		return fmt.Errorf("DPoP proof replay detected")
+	}
+
+	// Store JTI with expiration
+	s.usedJTIs[jti] = time.Now()
+
+	// Cleanup old JTIs (older than 10 minutes)
+	s.cleanupOldJTIs()
+
+	return nil
+}
+
+func (s *DPoPService) cleanupOldJTIs() {
+	cutoff := time.Now().Add(-10 * time.Minute)
+	for jti, t := range s.usedJTIs {
+		if t.Before(cutoff) {
+			delete(s.usedJTIs, jti)
+		}
+	}
+}
+
+func (s *DPoPService) normalizeURI(uri string) string {
+	// Remove query and fragment
+	if idx := strings.Index(uri, "?"); idx != -1 {
+		uri = uri[:idx]
+	}
+	if idx := strings.Index(uri, "#"); idx != -1 {
+		uri = uri[:idx]
+	}
+	return uri
+}
+
+func generateJTI() (string, error) {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// ValidateCertificate validates a client certificate for mTLS
+func (s *DPoPService) ValidateCertificate(cert *x509.Certificate) error {
+	if cert == nil {
+		return fmt.Errorf("no certificate provided")
+	}
+
+	// Check expiration
+	now := time.Now()
+	if now.Before(cert.NotBefore) {
+		return fmt.Errorf("certificate not yet valid")
+	}
+	if now.After(cert.NotAfter) {
+		return fmt.Errorf("certificate has expired")
+	}
+
+	return nil
+}
+
+// GetCertificateThumbprint returns the SHA-256 thumbprint of a certificate
+func (s *DPoPService) GetCertificateThumbprint(cert *x509.Certificate) string {
+	hash := sha256.Sum256(cert.Raw)
+	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+// BindTokenToCertificate binds an access token to a certificate thumbprint
+func (s *DPoPService) BindTokenToCertificate(token string, certThumbprint string) string {
+	// This would be stored with the token in production
+	return certThumbprint
+}
+
+// GetJKTFromProof extracts the JKT (JWK Thumbprint) from a DPoP proof
+func (s *DPoPService) GetJKTFromProof(dpopHeader string) (string, error) {
+	if dpopHeader == "" {
+		return "", fmt.Errorf("DPoP header is required")
+	}
+
+	// Parse without verification to get the header
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, _, err := parser.ParseUnverified(dpopHeader, &DPoPProof{})
+	if err != nil {
+		return "", fmt.Errorf("failed to parse DPoP proof: %w", err)
+	}
+
+	// Get the JWK from header
+	jwkRaw, ok := token.Header["jwk"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("missing jwk in DPoP header")
+	}
+
+	// Parse the public key to get thumbprint
+	pubKey, err := s.parseJWK(jwkRaw)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse JWK: %w", err)
+	}
+
+	// Get the thumbprint
+	thumbprint, err := s.GetPublicKeyThumbprint(pubKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to get thumbprint: %w", err)
+	}
+
+	return thumbprint, nil
+}

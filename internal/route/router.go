@@ -72,6 +72,21 @@ func (r *Router) setupMiddleware() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+
+	// Security headers
+	r.mux.Use(r.securityHeaders)
+}
+
+func (r *Router) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		next.ServeHTTP(w, req)
+	})
 }
 
 func (r *Router) setupRoutes() {
@@ -107,9 +122,30 @@ func (r *Router) setupRoutes() {
 		})
 
 		r2.Route("/ciba", func(r3 chi.Router) {
-			r3.Get("/pending", r.oauthHandler.HandleCIBAPending)
+			r3.Get("/pending", r.oauthHandler.HandleCIBAListPending)
 			r3.Post("/{authReqID}/approve", r.oauthHandler.HandleCIBAApprove)
 			r3.Post("/{authReqID}/deny", r.oauthHandler.HandleCIBADeny)
+		})
+
+		r2.Route("/scopes", func(r3 chi.Router) {
+			r3.Get("/", r.managementCtrl.HandleListScopes)
+			r3.Post("/", r.managementCtrl.HandleCreateScope)
+			r3.Get("/{name}", r.managementCtrl.HandleGetScope)
+			r3.Delete("/{name}", r.managementCtrl.HandleDeleteScope)
+		})
+
+		r2.Route("/resources", func(r3 chi.Router) {
+			r3.Get("/", r.managementCtrl.HandleListResources)
+			r3.Post("/", r.managementCtrl.HandleCreateResource)
+			r3.Get("/{uri}", r.managementCtrl.HandleGetResource)
+			r3.Put("/{uri}", r.managementCtrl.HandleUpdateResource)
+			r3.Delete("/{uri}", r.managementCtrl.HandleDeleteResource)
+			r3.Get("/{uri}/scopes", r.managementCtrl.HandleListResourceScopes)
+		})
+
+		r2.Route("/consents", func(r3 chi.Router) {
+			r3.Get("/", r.managementCtrl.HandleListConsents)
+			r3.Delete("/", r.managementCtrl.HandleRevokeConsent)
 		})
 	})
 
@@ -122,7 +158,7 @@ func (r *Router) setupRoutes() {
 		r2.Post("/register", r.oauthHandler.HandleRegister)
 		r2.Post("/device", r.oauthHandler.HandleDeviceAuthorization)
 		r2.Post("/par", r.oauthHandler.HandlePAR)
-		r2.Post("/bc-authorize", r.oauthHandler.HandleCIBA)
+		r2.Post("/bc-authorize", r.oauthHandler.HandleBCAuthorize)
 	})
 
 	r.mux.Route("/device", func(r2 chi.Router) {
@@ -131,8 +167,8 @@ func (r *Router) setupRoutes() {
 	})
 
 	r.mux.Route("/ciba", func(r2 chi.Router) {
-		r2.Get("/pending", r.oauthHandler.HandleCIBAPending)
-		r2.Get("/poll", r.oauthHandler.HandleCIBAPoll)
+		r2.Get("/pending", r.oauthHandler.HandleCIBAListPending)
+		r2.Get("/status", r.oauthHandler.HandleCIBAStatus)
 		r2.Post("/approve", r.oauthHandler.HandleCIBAApprove)
 		r2.Post("/deny", r.oauthHandler.HandleCIBADeny)
 	})

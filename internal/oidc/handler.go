@@ -334,8 +334,8 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"pushed_authorization_request_endpoint":            issuer + "/oauth/par",
 		"backchannel_authentication_endpoint":              issuer + "/oauth/bc-authorize",
 		"scopes_supported":                                 h.cfg.OIDC.SupportedScopes,
-		"response_types_supported":                         []string{"code"},
-		"response_modes_supported":                         []string{"query", "fragment"},
+		"response_types_supported":                         []string{"code", "token", "id_token", "code id_token", "code token", "code id_token token", "none"},
+		"response_modes_supported":                         []string{"query", "fragment", "form_post"},
 		"grant_types_supported":                            h.cfg.OIDC.SupportedGrantTypes,
 		"token_endpoint_auth_methods_supported":            h.cfg.OIDC.SupportedAuthMethods,
 		"token_endpoint_auth_signing_alg_values_supported": []string{"RS256", "ES256"},
@@ -346,10 +346,23 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"claims_parameter_supported":                       true,
 		"request_parameter_supported":                      true,
 		"request_uri_parameter_supported":                  true,
+		"request_object_signing_alg_values_supported":      []string{"RS256", "ES256", "none"},
 		"require_pushed_authorization_requests":            false,
 		"backchannel_token_delivery_modes_supported":       []string{"poll", "ping"},
 		"backchannel_user_code_parameter_supported":        false,
-		"dpop_signing_alg_values_supported":                []string{"ES256"},
+		"tls_client_certificate_bound_access_tokens":       h.cfg.Security.MTLS.CertBinding,
+		"dpop_signing_alg_values_supported":                []string{"ES256", "RS256"},
+		"authorization_response_iss_parameter_supported":   true,
+	}
+
+	// Add mTLS endpoint aliases if mTLS is enabled
+	if h.cfg.Security.MTLS.Enabled && h.cfg.Server.TLS.Enabled {
+		mtlsIssuer := fmt.Sprintf("https://localhost:%d", h.cfg.Server.Port)
+		discovery["mtls_endpoint_aliases"] = map[string]string{
+			"token_endpoint":         mtlsIssuer + "/oauth/token",
+			"revocation_endpoint":    mtlsIssuer + "/oauth/revoke",
+			"introspection_endpoint": mtlsIssuer + "/oauth/introspect",
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

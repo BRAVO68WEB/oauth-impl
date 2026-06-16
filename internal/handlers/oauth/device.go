@@ -21,6 +21,15 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Check for duplicate parameters
+	if hasDuplicateParams(r) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "Duplicate parameters are not allowed",
+		})
+		return
+	}
+
 	clientID, clientSecret, ok := r.BasicAuth()
 	if !ok {
 		clientID = r.Form.Get("client_id")
@@ -35,7 +44,7 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	client, err := h.db.GetClient(clientID)
+	client, err := h.clientRepo.GetByID(clientID)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error":             "invalid_client",
@@ -101,7 +110,7 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 		Interval:   interval,
 	}
 
-	if err := h.db.SaveDeviceCode(dc); err != nil {
+	if err := h.deviceRepo.Save(dc); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error":             "server_error",
 			"error_description": "Failed to save device code",
@@ -165,7 +174,7 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		clientSecret = r.Form.Get("client_secret")
 	}
 
-	dc, err := h.db.GetDeviceCode(deviceCode)
+	dc, err := h.deviceRepo.GetByDeviceCode(deviceCode)
 	if err != nil {
 		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Invalid device code")
 		return
@@ -176,7 +185,7 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.db.GetClient(dc.ClientID)
+	client, err := h.clientRepo.GetByID(dc.ClientID)
 	if err != nil {
 		writeTokenError(w, http.StatusBadRequest, "invalid_client", "Client not found")
 		return
@@ -242,12 +251,12 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
 	}
 
-	if err := h.db.SaveAccessToken(accessTok); err != nil {
+	if err := h.tokenRepo.SaveAccessToken(accessTok); err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to save access token")
 		return
 	}
 
-	if err := h.db.SaveRefreshToken(refreshTok); err != nil {
+	if err := h.tokenRepo.SaveRefreshToken(refreshTok); err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to save refresh token")
 		return
 	}
@@ -290,7 +299,7 @@ func (h *Handler) HandleDeviceVerification(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	dc, err := h.db.GetDeviceCodeByUserCode(userCode)
+	dc, err := h.deviceRepo.GetByUserCode(userCode)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error":             "invalid_grant",
@@ -309,7 +318,7 @@ func (h *Handler) HandleDeviceVerification(w http.ResponseWriter, r *http.Reques
 
 	userID := r.Form.Get("user_id")
 
-	if err := h.db.UpdateDeviceCodeStatus(dc.DeviceCode, "approved"); err != nil {
+	if err := h.deviceRepo.UpdateStatus(dc.DeviceCode, "approved"); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error":             "server_error",
 			"error_description": "Failed to update device code",
@@ -317,7 +326,6 @@ func (h *Handler) HandleDeviceVerification(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Approve in queue (best effort)
 	_ = h.q.Approve(dc.DeviceCode, userID)
 
 	w.Header().Set("Content-Type", "text/html")

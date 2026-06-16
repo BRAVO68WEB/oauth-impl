@@ -22,9 +22,12 @@ type ServerConfig struct {
 }
 
 type TLSConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
+	Enabled    bool   `yaml:"enabled"`
+	CertFile   string `yaml:"cert_file"`
+	KeyFile    string `yaml:"key_file"`
+	ClientCA   string `yaml:"client_ca"`
+	ClientAuth string `yaml:"client_auth"`
+	CRLFile    string `yaml:"crl_file"`
 }
 
 type DatabaseConfig struct {
@@ -43,6 +46,8 @@ type SecurityConfig struct {
 	AllowPlainPKCE            bool          `yaml:"allow_plain_pkce"`
 	Issuer                    string        `yaml:"issuer"`
 	MFA                       MFAConfig     `yaml:"mfa"`
+	MTLS                      MTLSConfig    `yaml:"mtls"`
+	DPoP                      DPoPConfig    `yaml:"dpop"`
 }
 
 type MFAConfig struct {
@@ -51,6 +56,20 @@ type MFAConfig struct {
 	Issuer   string `yaml:"issuer"`
 	Digits   int    `yaml:"digits"`
 	Period   uint   `yaml:"period"`
+}
+
+type MTLSConfig struct {
+	Enabled          bool `yaml:"enabled"`
+	CertBinding      bool `yaml:"cert_binding"`
+	BindRefreshToken bool `yaml:"bind_refresh_token"`
+	RequireForToken  bool `yaml:"require_for_token"`
+}
+
+type DPoPConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	ProofLifetime int  `yaml:"proof_lifetime"`
+	NonceRequired bool `yaml:"nonce_required"`
+	NonceLifetime int  `yaml:"nonce_lifetime"`
 }
 
 type QueueConfig struct {
@@ -74,7 +93,8 @@ func DefaultConfig() *Config {
 			Host: "0.0.0.0",
 			Port: 8080,
 			TLS: TLSConfig{
-				Enabled: false,
+				Enabled:    false,
+				ClientAuth: "none",
 			},
 		},
 		Database: DatabaseConfig{
@@ -88,8 +108,8 @@ func DefaultConfig() *Config {
 			DeviceCodeLifetime:        1800 * time.Second,
 			CIBARequestLifetime:       120 * time.Second,
 			RequestURILifetime:        60 * time.Second,
-			RequirePKCE:               true,
-			AllowPlainPKCE:            false,
+			RequirePKCE:               false,
+			AllowPlainPKCE:            true,
 			Issuer:                    "http://localhost:8080",
 			MFA: MFAConfig{
 				Enabled:  false,
@@ -97,6 +117,18 @@ func DefaultConfig() *Config {
 				Issuer:   "OAuthImplServer",
 				Digits:   6,
 				Period:   30,
+			},
+			MTLS: MTLSConfig{
+				Enabled:          false,
+				CertBinding:      false,
+				BindRefreshToken: false,
+				RequireForToken:  false,
+			},
+			DPoP: DPoPConfig{
+				Enabled:       false,
+				ProofLifetime: 300,
+				NonceRequired: false,
+				NonceLifetime: 300,
 			},
 		},
 		Queue: QueueConfig{
@@ -122,6 +154,7 @@ func DefaultConfig() *Config {
 				"refresh_token",
 				"urn:ietf:params:oauth:grant-type:device_code",
 				"urn:openid:params:grant-type:ciba",
+				"urn:ietf:params:oauth:grant-type:token-exchange",
 			},
 			SupportedAuthMethods: []string{
 				"client_secret_basic",
@@ -129,6 +162,8 @@ func DefaultConfig() *Config {
 				"client_secret_jwt",
 				"private_key_jwt",
 				"none",
+				"tls_client_auth",
+				"self_signed_tls_client_auth",
 			},
 		},
 	}
