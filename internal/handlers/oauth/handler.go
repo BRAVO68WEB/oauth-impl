@@ -427,17 +427,17 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 		// Return HTML form that auto-submits to redirect_uri
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `<!DOCTYPE html>
+		_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head><title>Submit This Form</title></head>
 <body onload="javascript:document.forms[0].submit()">
 <form method="post" action="%s">`, redirectURI)
 		for key, values := range params {
 			for _, value := range values {
-				fmt.Fprintf(w, `<input type="hidden" name="%s" value="%s"/>`, key, value)
+				_, _ = fmt.Fprintf(w, `<input type="hidden" name="%s" value="%s"/>`, key, value)
 			}
 		}
-		fmt.Fprintf(w, `</form></body></html>`)
+		_, _ = fmt.Fprintf(w, `</form></body></html>`)
 		return
 	}
 

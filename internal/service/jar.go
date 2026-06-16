@@ -108,7 +108,7 @@ func (s *JARService) ValidateRequestObject(requestJWT string, client *models.Cli
 	}
 
 	// Validate exp (if present)
-	if claims.ExpiresAt != nil && claims.ExpiresAt.Time.Before(time.Now()) {
+	if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("request JWT expired")
 	}
 

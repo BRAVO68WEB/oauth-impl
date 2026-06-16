@@ -259,41 +259,6 @@ func (s *DPoPService) parseJWK(jwkRaw map[string]interface{}) (*ecdsa.PublicKey,
 	}, nil
 }
 
-func (s *DPoPService) validateClaims(claims *DPoPProof, method string, uri string) error {
-	// Check required claims
-	if claims.ID == "" {
-		return fmt.Errorf("missing jti claim")
-	}
-	if claims.HTM == "" {
-		return fmt.Errorf("missing htm claim")
-	}
-	if claims.HTU == "" {
-		return fmt.Errorf("missing htu claim")
-	}
-
-	// Validate method
-	if claims.HTM != method {
-		return fmt.Errorf("htm mismatch: expected %s, got %s", method, claims.HTM)
-	}
-
-	// Validate URI (ignore query and fragment)
-	expectedHTU := s.normalizeURI(uri)
-	actualHTU := s.normalizeURI(claims.HTU)
-	if expectedHTU != actualHTU {
-		return fmt.Errorf("htu mismatch: expected %s, got %s", expectedHTU, actualHTU)
-	}
-
-	// Check expiration (5 minute window)
-	if claims.IssuedAt != nil {
-		age := time.Since(claims.IssuedAt.Time)
-		if age > 5*time.Minute {
-			return fmt.Errorf("DPoP proof expired (age: %v)", age)
-		}
-	}
-
-	return nil
-}
-
 func (s *DPoPService) validateATH(ath string, accessToken string) error {
 	// Compute SHA-256 hash of access token
 	hash := sha256.Sum256([]byte(accessToken))

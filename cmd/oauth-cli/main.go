@@ -1399,12 +1399,21 @@ func generateDPoPKey(dir string) error {
 		return err
 	}
 
+	// Use ECDH API to get key bytes (non-deprecated in Go 1.26)
+	ecdhKey, _ := key.ECDH()
+	pubBytes := ecdhKey.PublicKey().Bytes()
+	x := b64(pubBytes[1:33])
+	y := b64(pubBytes[33:65])
+
+	privBytes := ecdhKey.Bytes()
+	d := b64(privBytes)
+
 	privJWK := jwkKey{
 		Kty: "EC",
 		Crv: "P-256",
-		D:   b64(key.D.Bytes()),
-		X:   b64(key.PublicKey.X.Bytes()),
-		Y:   b64(key.PublicKey.Y.Bytes()),
+		D:   d,
+		X:   x,
+		Y:   y,
 		Kid: "dpop-key-1",
 		Use: "sig",
 		Alg: "ES256",
@@ -1413,8 +1422,8 @@ func generateDPoPKey(dir string) error {
 	pubJWK := jwkKey{
 		Kty: "EC",
 		Crv: "P-256",
-		X:   b64(key.PublicKey.X.Bytes()),
-		Y:   b64(key.PublicKey.Y.Bytes()),
+		X:   x,
+		Y:   y,
 		Kid: "dpop-key-1",
 		Use: "sig",
 		Alg: "ES256",
