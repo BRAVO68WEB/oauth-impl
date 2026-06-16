@@ -12,13 +12,13 @@ import (
 )
 
 type ManagementController struct {
-	clientSvc   *service.ClientService
-	userSvc     *service.UserService
-	tokenSvc    *service.TokenService
-	totpSvc     *service.TOTPService
-	scopeRepo   *repository.ScopeRepository
+	clientSvc    *service.ClientService
+	userSvc      *service.UserService
+	tokenSvc     *service.TokenService
+	totpSvc      *service.TOTPService
+	scopeRepo    *repository.ScopeRepository
 	resourceRepo *repository.ResourceRepository
-	consentRepo *repository.ConsentRepository
+	consentRepo  *repository.ConsentRepository
 }
 
 func NewManagementController(

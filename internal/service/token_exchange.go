@@ -13,10 +13,10 @@ import (
 
 // TokenExchangeService implements RFC 8693 Token Exchange
 type TokenExchangeService struct {
-	tokenRepo *repository.TokenRepository
-	userRepo  *repository.UserRepository
+	tokenRepo  *repository.TokenRepository
+	userRepo   *repository.UserRepository
 	clientRepo *repository.ClientRepository
-	cfg       *config.SecurityConfig
+	cfg        *config.SecurityConfig
 }
 
 type TokenExchangeRequest struct {

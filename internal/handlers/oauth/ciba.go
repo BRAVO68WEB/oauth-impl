@@ -312,11 +312,11 @@ func (h *Handler) HandleCIBAApprove(w http.ResponseWriter, r *http.Request) {
 	_ = h.q.Approve(authReqID, userID)
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"auth_req_id":  authReqID,
-		"status":       "approved",
-		"client_id":    cibaReq.ClientID,
+		"auth_req_id":     authReqID,
+		"status":          "approved",
+		"client_id":       cibaReq.ClientID,
 		"binding_message": cibaReq.BindingMessage,
-		"expires_at":   cibaReq.ExpiresAt.Unix(),
+		"expires_at":      cibaReq.ExpiresAt.Unix(),
 	})
 }
 

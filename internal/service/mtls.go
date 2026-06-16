@@ -14,11 +14,11 @@ import (
 )
 
 type MTLSService struct {
-	certStore  map[string]*x509.Certificate // thumbprint -> certificate
-	mu         sync.RWMutex
-	crl        *x509.RevocationList
-	crlPath    string
-	crlLoaded  bool
+	certStore map[string]*x509.Certificate // thumbprint -> certificate
+	mu        sync.RWMutex
+	crl       *x509.RevocationList
+	crlPath   string
+	crlLoaded bool
 }
 
 func NewMTLSService() *MTLSService {

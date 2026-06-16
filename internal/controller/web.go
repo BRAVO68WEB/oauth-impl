@@ -120,8 +120,8 @@ func oauthTemplateData(params map[string]string, extra map[string]interface{}) m
 func (c *WebController) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 	params := extractOAuthParams(r)
 	data := oauthTemplateData(params, map[string]interface{}{
-		"Error":      "",
-		"LoginHint":  params["login_hint"],
+		"Error":     "",
+		"LoginHint": params["login_hint"],
 	})
 	_ = c.templates.ExecuteTemplate(w, "login.html", data)
 }

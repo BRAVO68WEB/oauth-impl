@@ -264,10 +264,10 @@ func clientCmd() *cobra.Command {
 					"openid", "profile", "email", "address", "phone", "offline_access",
 					"read", "write", "admin",
 				},
-				"token_endpoint_auth_method": "client_secret_basic",
-				"dpop_bound_access_tokens": false,
+				"token_endpoint_auth_method":            "client_secret_basic",
+				"dpop_bound_access_tokens":              false,
 				"require_pushed_authorization_requests": false,
-				"backchannel_token_delivery_mode": "poll",
+				"backchannel_token_delivery_mode":       "poll",
 			}
 
 			jsonBody, _ := json.Marshal(body)
@@ -1519,8 +1519,8 @@ func generateOAuchConfig(dir string) error {
 	_ = json.Unmarshal(clientBytes, &clientKey)
 
 	config := map[string]interface{}{
-		"DPoPSigningKey":               dpopKey,
-		"RequestSigningKey":            clientKey,
+		"DPoPSigningKey":                dpopKey,
+		"RequestSigningKey":             clientKey,
 		"ClientAuthenticationMechanism": 3,
 	}
 

@@ -37,12 +37,12 @@ type Server struct {
 	oauthHandler *oauth.Handler
 	oidcHandler  *oidc.Handler
 	clientRepo   *repository.ClientRepository
-	userRepo      *repository.UserRepository
-	tokenRepo     *repository.TokenRepository
-	cibaRepo      *repository.CIBARepository
-	scopeRepo     *repository.ScopeRepository
-	resourceRepo  *repository.ResourceRepository
-	consentRepo   *repository.ConsentRepository
+	userRepo     *repository.UserRepository
+	tokenRepo    *repository.TokenRepository
+	cibaRepo     *repository.CIBARepository
+	scopeRepo    *repository.ScopeRepository
+	resourceRepo *repository.ResourceRepository
+	consentRepo  *repository.ConsentRepository
 }
 
 func New(cfg *config.Config, db *database.DB, q *queue.MemoryQueue) (*Server, error) {
