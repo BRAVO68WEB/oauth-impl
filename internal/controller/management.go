@@ -51,16 +51,16 @@ func (c *ManagementController) HandleListClients(w http.ResponseWriter, r *http.
 
 func (c *ManagementController) HandleCreateClient(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name                                string   `json:"name"`
-		RedirectURIs                        []string `json:"redirect_uris"`
-		GrantTypes                          []string `json:"grant_types"`
-		Scopes                              []string `json:"scopes"`
-		TokenEndpointAuthMethod             string   `json:"token_endpoint_auth_method"`
-		DPoPBoundAccessTokens               bool     `json:"dpop_bound_access_tokens"`
-		RequirePushedAuthorizationRequests  bool     `json:"require_pushed_authorization_requests"`
-		BackchannelTokenDeliveryMode        string   `json:"backchannel_token_delivery_mode"`
-		BackchannelClientNotificationEndpoint string `json:"backchannel_client_notification_endpoint"`
-		BackchannelAuthenticationRequestSigningAlg string `json:"backchannel_authentication_request_signing_alg"`
+		Name                                       string   `json:"name"`
+		RedirectURIs                               []string `json:"redirect_uris"`
+		GrantTypes                                 []string `json:"grant_types"`
+		Scopes                                     []string `json:"scopes"`
+		TokenEndpointAuthMethod                    string   `json:"token_endpoint_auth_method"`
+		DPoPBoundAccessTokens                      bool     `json:"dpop_bound_access_tokens"`
+		RequirePushedAuthorizationRequests         bool     `json:"require_pushed_authorization_requests"`
+		BackchannelTokenDeliveryMode               string   `json:"backchannel_token_delivery_mode"`
+		BackchannelClientNotificationEndpoint      string   `json:"backchannel_client_notification_endpoint"`
+		BackchannelAuthenticationRequestSigningAlg string   `json:"backchannel_authentication_request_signing_alg"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -69,14 +69,14 @@ func (c *ManagementController) HandleCreateClient(w http.ResponseWriter, r *http
 	}
 
 	client, err := c.clientSvc.CreateClient(service.CreateClientInput{
-		Name:                                req.Name,
-		RedirectURIs:                        req.RedirectURIs,
-		GrantTypes:                          req.GrantTypes,
-		Scopes:                              req.Scopes,
-		TokenEndpointAuthMethod:             req.TokenEndpointAuthMethod,
-		DPoPBoundAccessTokens:               req.DPoPBoundAccessTokens,
-		RequirePushedAuthorizationRequests:  req.RequirePushedAuthorizationRequests,
-		BackchannelTokenDeliveryMode:        req.BackchannelTokenDeliveryMode,
+		Name:                                  req.Name,
+		RedirectURIs:                          req.RedirectURIs,
+		GrantTypes:                            req.GrantTypes,
+		Scopes:                                req.Scopes,
+		TokenEndpointAuthMethod:               req.TokenEndpointAuthMethod,
+		DPoPBoundAccessTokens:                 req.DPoPBoundAccessTokens,
+		RequirePushedAuthorizationRequests:    req.RequirePushedAuthorizationRequests,
+		BackchannelTokenDeliveryMode:          req.BackchannelTokenDeliveryMode,
 		BackchannelClientNotificationEndpoint: req.BackchannelClientNotificationEndpoint,
 		BackchannelAuthenticationRequestSigningAlg: req.BackchannelAuthenticationRequestSigningAlg,
 	})
@@ -107,16 +107,16 @@ func (c *ManagementController) HandleUpdateClient(w http.ResponseWriter, r *http
 	}
 
 	var req struct {
-		Name                                string   `json:"name"`
-		RedirectURIs                        []string `json:"redirect_uris"`
-		GrantTypes                          []string `json:"grant_types"`
-		Scopes                              []string `json:"scopes"`
-		TokenEndpointAuthMethod             string   `json:"token_endpoint_auth_method"`
-		DPoPBoundAccessTokens               bool     `json:"dpop_bound_access_tokens"`
-		RequirePushedAuthorizationRequests  bool     `json:"require_pushed_authorization_requests"`
-		BackchannelTokenDeliveryMode        string   `json:"backchannel_token_delivery_mode"`
-		BackchannelClientNotificationEndpoint string `json:"backchannel_client_notification_endpoint"`
-		BackchannelAuthenticationRequestSigningAlg string `json:"backchannel_authentication_request_signing_alg"`
+		Name                                       string   `json:"name"`
+		RedirectURIs                               []string `json:"redirect_uris"`
+		GrantTypes                                 []string `json:"grant_types"`
+		Scopes                                     []string `json:"scopes"`
+		TokenEndpointAuthMethod                    string   `json:"token_endpoint_auth_method"`
+		DPoPBoundAccessTokens                      bool     `json:"dpop_bound_access_tokens"`
+		RequirePushedAuthorizationRequests         bool     `json:"require_pushed_authorization_requests"`
+		BackchannelTokenDeliveryMode               string   `json:"backchannel_token_delivery_mode"`
+		BackchannelClientNotificationEndpoint      string   `json:"backchannel_client_notification_endpoint"`
+		BackchannelAuthenticationRequestSigningAlg string   `json:"backchannel_authentication_request_signing_alg"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -246,9 +246,9 @@ func (c *ManagementController) HandleMFAEnable(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"secret":     result.Secret,
-		"qr_uri":     result.QRCodeURI,
-		"qr_base64":  result.QRBase64,
+		"secret":    result.Secret,
+		"qr_uri":    result.QRCodeURI,
+		"qr_base64": result.QRBase64,
 	})
 }
 
@@ -287,8 +287,8 @@ func (c *ManagementController) HandleMFAStatus(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user_id":       userID,
-		"mfa_enabled":   enabled,
+		"user_id":     userID,
+		"mfa_enabled": enabled,
 	})
 }
 

@@ -10,7 +10,7 @@ import (
 type AuthRequestType string
 
 const (
-	AuthRequestTypeCIBA  AuthRequestType = "ciba"
+	AuthRequestTypeCIBA   AuthRequestType = "ciba"
 	AuthRequestTypeDevice AuthRequestType = "device"
 )
 
@@ -24,19 +24,19 @@ const (
 )
 
 type AuthRequest struct {
-	ID                     string          `json:"id"`
-	Type                   AuthRequestType `json:"type"`
-	ClientID               string          `json:"client_id"`
-	UserID                 string          `json:"user_id,omitempty"`
-	BindingMessage         string          `json:"binding_message,omitempty"`
-	UserCode               string          `json:"user_code,omitempty"`
-	Status                 AuthRequestStatus `json:"status"`
-	DeliveryMode           string          `json:"delivery_mode,omitempty"`
-	Interval               int             `json:"interval"`
-	ClientNotificationToken string         `json:"client_notification_token,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
-	ExpiresAt              time.Time       `json:"expires_at"`
-	DenialReason           string          `json:"denial_reason,omitempty"`
+	ID                      string            `json:"id"`
+	Type                    AuthRequestType   `json:"type"`
+	ClientID                string            `json:"client_id"`
+	UserID                  string            `json:"user_id,omitempty"`
+	BindingMessage          string            `json:"binding_message,omitempty"`
+	UserCode                string            `json:"user_code,omitempty"`
+	Status                  AuthRequestStatus `json:"status"`
+	DeliveryMode            string            `json:"delivery_mode,omitempty"`
+	Interval                int               `json:"interval"`
+	ClientNotificationToken string            `json:"client_notification_token,omitempty"`
+	CreatedAt               time.Time         `json:"created_at"`
+	ExpiresAt               time.Time         `json:"expires_at"`
+	DenialReason            string            `json:"denial_reason,omitempty"`
 }
 
 type Queue interface {

@@ -115,15 +115,15 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 	}
 
 	queueReq := &queue.AuthRequest{
-		ID:           deviceCode,
-		Type:         queue.AuthRequestTypeDevice,
-		ClientID:     clientID,
-		UserCode:     userCode,
+		ID:             deviceCode,
+		Type:           queue.AuthRequestTypeDevice,
+		ClientID:       clientID,
+		UserCode:       userCode,
 		BindingMessage: fmt.Sprintf("Enter code: %s", userCode),
-		Status:       queue.StatusPending,
-		Interval:     interval,
-		CreatedAt:    time.Now(),
-		ExpiresAt:    dc.ExpiresAt,
+		Status:         queue.StatusPending,
+		Interval:       interval,
+		CreatedAt:      time.Now(),
+		ExpiresAt:      dc.ExpiresAt,
 	}
 
 	if err := h.q.Enqueue(queueReq); err != nil {
@@ -138,12 +138,12 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"device_code":              deviceCode,
-		"user_code":                userCode,
-		"verification_uri":         issuer + "/device",
+		"device_code":               deviceCode,
+		"user_code":                 userCode,
+		"verification_uri":          issuer + "/device",
 		"verification_uri_complete": issuer + "/device?user_code=" + userCode,
-		"expires_in":               expiresIn,
-		"interval":                 interval,
+		"expires_in":                expiresIn,
+		"interval":                  interval,
 	})
 }
 

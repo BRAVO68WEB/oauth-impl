@@ -13,10 +13,10 @@ import (
 )
 
 type TokenService struct {
-	tokenRepo  *repository.TokenRepository
-	authRepo   *repository.AuthCodeRepository
-	oidcSvc    *oidc.Handler
-	cfg        *config.SecurityConfig
+	tokenRepo *repository.TokenRepository
+	authRepo  *repository.AuthCodeRepository
+	oidcSvc   *oidc.Handler
+	cfg       *config.SecurityConfig
 }
 
 type TokenResult struct {

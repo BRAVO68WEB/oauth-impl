@@ -19,15 +19,15 @@ func NewClientService(clientRepo *repository.ClientRepository) *ClientService {
 }
 
 type CreateClientInput struct {
-	Name                                string
-	RedirectURIs                        []string
-	GrantTypes                          []string
-	Scopes                              []string
-	TokenEndpointAuthMethod             string
-	DPoPBoundAccessTokens               bool
-	RequirePushedAuthorizationRequests  bool
-	BackchannelTokenDeliveryMode        string
-	BackchannelClientNotificationEndpoint string
+	Name                                       string
+	RedirectURIs                               []string
+	GrantTypes                                 []string
+	Scopes                                     []string
+	TokenEndpointAuthMethod                    string
+	DPoPBoundAccessTokens                      bool
+	RequirePushedAuthorizationRequests         bool
+	BackchannelTokenDeliveryMode               string
+	BackchannelClientNotificationEndpoint      string
 	BackchannelAuthenticationRequestSigningAlg string
 }
 
@@ -41,20 +41,20 @@ func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, e
 	}
 
 	client := &models.Client{
-		ID:                                  uuid.New().String(),
-		Secret:                              uuid.New().String(),
-		Name:                                input.Name,
-		RedirectURIs:                        input.RedirectURIs,
-		GrantTypes:                          input.GrantTypes,
-		Scopes:                              input.Scopes,
-		TokenEndpointAuthMethod:             input.TokenEndpointAuthMethod,
-		DPoPBoundAccessTokens:               input.DPoPBoundAccessTokens,
-		RequirePushedAuthorizationRequests:  input.RequirePushedAuthorizationRequests,
-		BackchannelTokenDeliveryMode:        input.BackchannelTokenDeliveryMode,
+		ID:                                    uuid.New().String(),
+		Secret:                                uuid.New().String(),
+		Name:                                  input.Name,
+		RedirectURIs:                          input.RedirectURIs,
+		GrantTypes:                            input.GrantTypes,
+		Scopes:                                input.Scopes,
+		TokenEndpointAuthMethod:               input.TokenEndpointAuthMethod,
+		DPoPBoundAccessTokens:                 input.DPoPBoundAccessTokens,
+		RequirePushedAuthorizationRequests:    input.RequirePushedAuthorizationRequests,
+		BackchannelTokenDeliveryMode:          input.BackchannelTokenDeliveryMode,
 		BackchannelClientNotificationEndpoint: input.BackchannelClientNotificationEndpoint,
 		BackchannelAuthenticationRequestSigningAlg: input.BackchannelAuthenticationRequestSigningAlg,
-		CreatedAt:                           time.Now(),
-		UpdatedAt:                           time.Now(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	if err := s.clientRepo.Create(client); err != nil {

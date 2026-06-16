@@ -122,15 +122,15 @@ func (h *Handler) HandleCIBA(w http.ResponseWriter, r *http.Request) {
 	expiresIn := int(h.cfg.Security.CIBARequestLifetime.Seconds())
 
 	cibaReq := &models.CIBARequest{
-		AuthReqID:              authReqID,
-		ClientID:               clientID,
-		UserID:                 userID,
-		BindingMessage:         bindingMessage,
-		UserCode:               userCode,
-		Status:                 "pending",
-		DeliveryMode:           client.BackchannelTokenDeliveryMode,
-		ExpiresAt:              time.Now().Add(h.cfg.Security.CIBARequestLifetime),
-		Interval:               interval,
+		AuthReqID:               authReqID,
+		ClientID:                clientID,
+		UserID:                  userID,
+		BindingMessage:          bindingMessage,
+		UserCode:                userCode,
+		Status:                  "pending",
+		DeliveryMode:            client.BackchannelTokenDeliveryMode,
+		ExpiresAt:               time.Now().Add(h.cfg.Security.CIBARequestLifetime),
+		Interval:                interval,
 		ClientNotificationToken: clientNotificationToken,
 	}
 
@@ -143,18 +143,18 @@ func (h *Handler) HandleCIBA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queueReq := &queue.AuthRequest{
-		ID:                     authReqID,
-		Type:                   queue.AuthRequestTypeCIBA,
-		ClientID:               clientID,
-		UserID:                 userID,
-		BindingMessage:         bindingMessage,
-		UserCode:               userCode,
-		Status:                 queue.StatusPending,
-		DeliveryMode:           client.BackchannelTokenDeliveryMode,
-		Interval:               interval,
+		ID:                      authReqID,
+		Type:                    queue.AuthRequestTypeCIBA,
+		ClientID:                clientID,
+		UserID:                  userID,
+		BindingMessage:          bindingMessage,
+		UserCode:                userCode,
+		Status:                  queue.StatusPending,
+		DeliveryMode:            client.BackchannelTokenDeliveryMode,
+		Interval:                interval,
 		ClientNotificationToken: clientNotificationToken,
-		CreatedAt:              time.Now(),
-		ExpiresAt:              cibaReq.ExpiresAt,
+		CreatedAt:               time.Now(),
+		ExpiresAt:               cibaReq.ExpiresAt,
 	}
 
 	if err := h.q.Enqueue(queueReq); err != nil {

@@ -16,9 +16,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string     `yaml:"host"`
-	Port int        `yaml:"port"`
-	TLS  TLSConfig  `yaml:"tls"`
+	Host string    `yaml:"host"`
+	Port int       `yaml:"port"`
+	TLS  TLSConfig `yaml:"tls"`
 }
 
 type TLSConfig struct {
@@ -33,16 +33,16 @@ type DatabaseConfig struct {
 }
 
 type SecurityConfig struct {
-	AccessTokenLifetime     time.Duration `yaml:"access_token_lifetime"`
-	RefreshTokenLifetime    time.Duration `yaml:"refresh_token_lifetime"`
+	AccessTokenLifetime       time.Duration `yaml:"access_token_lifetime"`
+	RefreshTokenLifetime      time.Duration `yaml:"refresh_token_lifetime"`
 	AuthorizationCodeLifetime time.Duration `yaml:"authorization_code_lifetime"`
-	DeviceCodeLifetime      time.Duration `yaml:"device_code_lifetime"`
-	CIBARequestLifetime     time.Duration `yaml:"ciba_request_lifetime"`
-	RequestURILifetime      time.Duration `yaml:"request_uri_lifetime"`
-	RequirePKCE             bool          `yaml:"require_pkce"`
-	AllowPlainPKCE          bool          `yaml:"allow_plain_pkce"`
-	Issuer                  string        `yaml:"issuer"`
-	MFA                     MFAConfig     `yaml:"mfa"`
+	DeviceCodeLifetime        time.Duration `yaml:"device_code_lifetime"`
+	CIBARequestLifetime       time.Duration `yaml:"ciba_request_lifetime"`
+	RequestURILifetime        time.Duration `yaml:"request_uri_lifetime"`
+	RequirePKCE               bool          `yaml:"require_pkce"`
+	AllowPlainPKCE            bool          `yaml:"allow_plain_pkce"`
+	Issuer                    string        `yaml:"issuer"`
+	MFA                       MFAConfig     `yaml:"mfa"`
 }
 
 type MFAConfig struct {
@@ -60,8 +60,8 @@ type QueueConfig struct {
 }
 
 type OIDCConfig struct {
-	Issuer               string `yaml:"issuer"`
-	SigningKey           string `yaml:"signing_key"`
+	Issuer               string   `yaml:"issuer"`
+	SigningKey           string   `yaml:"signing_key"`
 	SupportedScopes      []string `yaml:"supported_scopes"`
 	SupportedClaims      []string `yaml:"supported_claims"`
 	SupportedGrantTypes  []string `yaml:"supported_grant_types"`

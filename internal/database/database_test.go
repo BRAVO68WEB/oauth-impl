@@ -32,15 +32,15 @@ func TestCreateAndGetClient(t *testing.T) {
 	defer cleanup()
 
 	client := &models.Client{
-		ID:                    "test-client-1",
-		Secret:                "test-secret-1",
-		Name:                  "Test Client",
-		RedirectURIs:          []string{"https://example.com/callback"},
-		GrantTypes:            []string{"authorization_code"},
-		Scopes:                []string{"openid", "profile"},
+		ID:                      "test-client-1",
+		Secret:                  "test-secret-1",
+		Name:                    "Test Client",
+		RedirectURIs:            []string{"https://example.com/callback"},
+		GrantTypes:              []string{"authorization_code"},
+		Scopes:                  []string{"openid", "profile"},
 		TokenEndpointAuthMethod: "client_secret_basic",
-		CreatedAt:             time.Now(),
-		UpdatedAt:             time.Now(),
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
 	}
 
 	err := db.CreateClient(client)
