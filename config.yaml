@@ -1,0 +1,64 @@
+# OAuth Implementation Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+
+database:
+  path: "./oauth.db"
+  migrations: true
+
+security:
+  access_token_lifetime: 3600s
+  refresh_token_lifetime: 86400s
+  authorization_code_lifetime: 600s
+  device_code_lifetime: 1800s
+  ciba_request_lifetime: 120s
+  request_uri_lifetime: 60s
+  require_pkce: true
+  allow_plain_pkce: false
+  issuer: "http://localhost:8080"
+  mfa:
+    enabled: false
+    required: true
+    issuer: "OAuthImplServer"
+    digits: 6
+    period: 30
+
+queue:
+  type: "memory"
+  poll_interval: 5s
+  max_pending: 100
+
+oidc:
+  issuer: "http://localhost:8080"
+  supported_scopes:
+    - openid
+    - profile
+    - email
+    - address
+    - phone
+    - offline_access
+  supported_claims:
+    - sub
+    - name
+    - given_name
+    - family_name
+    - email
+    - email_verified
+    - preferred_username
+  supported_grant_types:
+    - authorization_code
+    - client_credentials
+    - refresh_token
+    - urn:ietf:params:oauth:grant-type:device_code
+    - urn:openid:params:grant-type:ciba
+  supported_auth_methods:
+    - client_secret_basic
+    - client_secret_post
+    - client_secret_jwt
+    - private_key_jwt
+    - none

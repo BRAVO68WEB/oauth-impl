@@ -1,0 +1,65 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go coverage tool
+*.out
+coverage.html
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Air tmp directory
+tmp/
+
+# Build artifacts
+build/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# Vendor (uncomment if not vendoring)
+# vendor/
+
+# Keys and secrets
+*.pem
+*.key
+*.crt
+
+# Documentation build
+docs/site/
+
+# Test fixtures
+testdata/
+
+# Temporary files
+*.tmp
+*.bak
+oauth-server
+!oauth-server/

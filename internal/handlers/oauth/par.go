@@ -1,0 +1,246 @@
+package oauth
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/pkg/crypto"
+)
+
+func (h *Handler) HandlePAR(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "Failed to parse request",
+		})
+		return
+	}
+
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok {
+		clientID = r.Form.Get("client_id")
+		clientSecret = r.Form.Get("client_secret")
+	}
+
+	if clientID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "client_id is required",
+		})
+		return
+	}
+
+	client, err := h.db.GetClient(clientID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_client",
+			"error_description": "Client not found",
+		})
+		return
+	}
+
+	if client.TokenEndpointAuthMethod != "none" && client.Secret != clientSecret {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error":             "invalid_client",
+			"error_description": "Invalid client credentials",
+		})
+		return
+	}
+
+	// Note: RequirePushedAuthorizationRequests is checked but not enforced in this implementation
+
+	responseType := r.Form.Get("response_type")
+	if responseType != "code" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "Only 'code' response type is supported",
+		})
+		return
+	}
+
+	redirectURI := r.Form.Get("redirect_uri")
+	if redirectURI == "" && len(client.RedirectURIs) > 0 {
+		redirectURI = client.RedirectURIs[0]
+	}
+
+	if !isValidRedirectURI(redirectURI, client.RedirectURIs) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "Invalid redirect_uri",
+		})
+		return
+	}
+
+	scope := r.Form.Get("scope")
+	state := r.Form.Get("state")
+	codeChallenge := r.Form.Get("code_challenge")
+	codeChallengeMethod := r.Form.Get("code_challenge_method")
+
+	if h.cfg.Security.RequirePKCE && codeChallenge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "code_challenge is required",
+		})
+		return
+	}
+
+	if codeChallenge != "" {
+		if codeChallengeMethod == "" {
+			codeChallengeMethod = "S256"
+		}
+		if codeChallengeMethod != "S256" && codeChallengeMethod != "plain" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error":             "invalid_request",
+				"error_description": "Unsupported code_challenge_method",
+			})
+			return
+		}
+	}
+
+	requestParams := map[string]string{
+		"response_type": responseType,
+		"client_id":     clientID,
+		"redirect_uri":  redirectURI,
+		"scope":         scope,
+	}
+	if state != "" {
+		requestParams["state"] = state
+	}
+	if codeChallenge != "" {
+		requestParams["code_challenge"] = codeChallenge
+		requestParams["code_challenge_method"] = codeChallengeMethod
+	}
+
+	for key, values := range r.Form {
+		if _, exists := requestParams[key]; !exists {
+			requestParams[key] = values[0]
+		}
+	}
+
+	requestParamsJSON, err := json.Marshal(requestParams)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":             "server_error",
+			"error_description": "Failed to marshal request parameters",
+		})
+		return
+	}
+
+	requestURI, err := crypto.GenerateRequestURI()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":             "server_error",
+			"error_description": "Failed to generate request URI",
+		})
+		return
+	}
+
+	par := &models.PushedAuthRequest{
+		RequestURI:    requestURI,
+		ClientID:      clientID,
+		RequestParams: string(requestParamsJSON),
+		ExpiresAt:     time.Now().Add(h.cfg.Security.RequestURILifetime),
+	}
+
+	if err := h.db.SavePushedAuthRequest(par); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error":             "server_error",
+			"error_description": "Failed to save pushed authorization request",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"request_uri": requestURI,
+		"expires_in":  int(h.cfg.Security.RequestURILifetime.Seconds()),
+	})
+}
+
+func (h *Handler) HandlePARAuthorize(w http.ResponseWriter, r *http.Request) {
+	requestURI := r.URL.Query().Get("request_uri")
+	clientID := r.URL.Query().Get("client_id")
+
+	if requestURI == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "request_uri is required", "")
+		return
+	}
+
+	par, err := h.db.GetPushedAuthRequest(requestURI)
+	if err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "Invalid request_uri", "")
+		return
+	}
+
+	if time.Now().After(par.ExpiresAt) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "request_uri expired", "")
+		return
+	}
+
+	if clientID != "" && clientID != par.ClientID {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_id mismatch", "")
+		return
+	}
+
+	var params map[string]string
+	if err := json.Unmarshal([]byte(par.RequestParams), &params); err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to parse request parameters", "")
+		return
+	}
+
+	state := params["state"]
+	redirectURI := params["redirect_uri"]
+	codeChallenge := params["code_challenge"]
+	codeChallengeMethod := params["code_challenge_method"]
+	scope := params["scope"]
+
+	code, err := crypto.GenerateAuthorizationCode()
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate authorization code", state)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		userID = params["user_id"]
+	}
+	if userID == "" {
+		userID = "default-user"
+	}
+
+	authCode := &models.AuthorizationCode{
+		Code:                code,
+		ClientID:            par.ClientID,
+		UserID:              userID,
+		RedirectURI:         redirectURI,
+		Scopes:              crypto.NormalizeScopes(scope),
+		CodeChallenge:       codeChallenge,
+		CodeChallengeMethod: codeChallengeMethod,
+		ExpiresAt:           time.Now().Add(h.cfg.Security.AuthorizationCodeLifetime),
+		Used:                false,
+	}
+
+	if err := h.db.SaveAuthorizationCode(authCode); err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to save authorization code", state)
+		return
+	}
+
+	params_str := fmt.Sprintf("code=%s", code)
+	if state != "" {
+		params_str += fmt.Sprintf("&state=%s", state)
+	}
+
+	if strings.Contains(redirectURI, "?") {
+		redirectURI += "&" + params_str
+	} else {
+		redirectURI += "?" + params_str
+	}
+
+	http.Redirect(w, r, redirectURI, http.StatusFound)
+}
