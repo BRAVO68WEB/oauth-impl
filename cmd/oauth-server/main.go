@@ -49,7 +49,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if cfg.Database.Migrations {
 		if err := db.Migrate(); err != nil {
@@ -177,7 +177,7 @@ Endpoints:
 	<-quit
 
 	log.Println("Shutting down server...")
-	httpServer.Close()
+	_ = httpServer.Close()
 }
 
 func mfaStatus(cfg *config.Config) string {

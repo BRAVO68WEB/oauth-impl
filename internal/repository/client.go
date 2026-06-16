@@ -87,7 +87,7 @@ func (r *ClientRepository) List() ([]*models.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	clients := make([]*models.Client, 0)
 	for rows.Next() {

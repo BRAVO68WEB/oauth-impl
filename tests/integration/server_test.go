@@ -39,8 +39,8 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 
 	cleanup := func() {
 		ts.Close()
-		db.Close()
-		os.Remove(dbPath)
+		func() { _ = db.Close() }()
+		func() { _ = os.Remove(dbPath) }()
 	}
 
 	return ts, cleanup
@@ -54,7 +54,7 @@ func TestHealthEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get health: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -86,7 +86,7 @@ func TestClientRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to register client: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("Expected status 201, got %d", resp.StatusCode)
@@ -123,7 +123,7 @@ func TestClientCredentialsFlow(t *testing.T) {
 	if err := json.NewDecoder(regResp.Body).Decode(&client); err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
-	regResp.Body.Close()
+	func() { _ = regResp.Body.Close() }()
 
 	clientID := client["client_id"].(string)
 	clientSecret := client["client_secret"].(string)
@@ -137,7 +137,7 @@ func TestClientCredentialsFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get token: %v", err)
 	}
-	defer tokenResp.Body.Close()
+	defer func() { _ = tokenResp.Body.Close() }()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", tokenResp.StatusCode)
@@ -164,7 +164,7 @@ func TestOIDCDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get discovery: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -199,7 +199,7 @@ func TestJWKSEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get JWKS: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", resp.StatusCode)

@@ -64,7 +64,7 @@ func (r *UserRepository) List() ([]*models.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	users := make([]*models.User, 0)
 	for rows.Next() {

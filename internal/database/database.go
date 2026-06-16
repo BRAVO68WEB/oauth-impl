@@ -237,7 +237,7 @@ func (db *DB) ListClients() ([]*models.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	clients := make([]*models.Client, 0)
 	for rows.Next() {
@@ -341,7 +341,7 @@ func (db *DB) ListUsers() ([]*models.User, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	users := make([]*models.User, 0)
 	for rows.Next() {
@@ -600,7 +600,7 @@ func (db *DB) GetPendingCIBARequests() ([]*models.CIBARequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	requests := make([]*models.CIBARequest, 0)
 	for rows.Next() {
@@ -673,7 +673,7 @@ func (db *DB) ListAccessTokens(clientID, userID string) ([]*models.AccessToken, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	tokens := make([]*models.AccessToken, 0)
 	for rows.Next() {
