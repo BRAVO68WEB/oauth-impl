@@ -53,24 +53,24 @@ func GenerateECKeyPair(curve elliptic.Curve) (*KeyPair, error) {
 
 type AccessTokenClaims struct {
 	jwt.RegisteredClaims
-	Scope    string   `json:"scope,omitempty"`
-	ClientID string   `json:"client_id"`
-	TokenType string  `json:"token_type,omitempty"`
-	DPoPJKT  string   `json:"dpop_jkt,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	ClientID  string `json:"client_id"`
+	TokenType string `json:"token_type,omitempty"`
+	DPoPJKT   string `json:"dpop_jkt,omitempty"`
 }
 
 type IDTokenClaims struct {
 	jwt.RegisteredClaims
-	Nonce               string `json:"nonce,omitempty"`
-	AuthTime            int64  `json:"auth_time,omitempty"`
-	AtHash              string `json:"at_hash,omitempty"`
-	Name                string `json:"name,omitempty"`
-	GivenName           string `json:"given_name,omitempty"`
-	FamilyName          string `json:"family_name,omitempty"`
-	PreferredUsername   string `json:"preferred_username,omitempty"`
-	Email               string `json:"email,omitempty"`
-	EmailVerified       bool   `json:"email_verified,omitempty"`
-	Picture             string `json:"picture,omitempty"`
+	Nonce             string `json:"nonce,omitempty"`
+	AuthTime          int64  `json:"auth_time,omitempty"`
+	AtHash            string `json:"at_hash,omitempty"`
+	Name              string `json:"name,omitempty"`
+	GivenName         string `json:"given_name,omitempty"`
+	FamilyName        string `json:"family_name,omitempty"`
+	PreferredUsername string `json:"preferred_username,omitempty"`
+	Email             string `json:"email,omitempty"`
+	EmailVerified     bool   `json:"email_verified,omitempty"`
+	Picture           string `json:"picture,omitempty"`
 }
 
 type ClientAssertionClaims struct {

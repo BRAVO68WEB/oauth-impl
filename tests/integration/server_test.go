@@ -75,10 +75,10 @@ func TestClientRegistration(t *testing.T) {
 	defer cleanup()
 
 	body := map[string]interface{}{
-		"client_name":  "Test Client",
+		"client_name":   "Test Client",
 		"redirect_uris": []string{"https://example.com/callback"},
-		"grant_types":  []string{"authorization_code"},
-		"scope":        "openid profile",
+		"grant_types":   []string{"authorization_code"},
+		"scope":         "openid profile",
 	}
 
 	jsonBody, _ := json.Marshal(body)
@@ -110,10 +110,10 @@ func TestClientCredentialsFlow(t *testing.T) {
 	defer cleanup()
 
 	regBody := map[string]interface{}{
-		"client_name":  "M2M Client",
+		"client_name":   "M2M Client",
 		"redirect_uris": []string{"https://example.com/callback"},
-		"grant_types":  []string{"client_credentials"},
-		"scope":        "openid",
+		"grant_types":   []string{"client_credentials"},
+		"scope":         "openid",
 	}
 
 	jsonBody, _ := json.Marshal(regBody)

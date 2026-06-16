@@ -21,17 +21,17 @@ import (
 )
 
 type Handler struct {
-	db      *database.DB
-	cfg     *config.Config
-	keySet  *KeySet
+	db     *database.DB
+	cfg    *config.Config
+	keySet *KeySet
 }
 
 type KeySet struct {
-	mu       sync.RWMutex
-	rsaKey   *rsa.PrivateKey
-	ecKey    *ecdsa.PrivateKey
-	rsaKid   string
-	ecKid    string
+	mu     sync.RWMutex
+	rsaKey *rsa.PrivateKey
+	ecKey  *ecdsa.PrivateKey
+	rsaKid string
+	ecKid  string
 }
 
 type JWK struct {
@@ -318,34 +318,34 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	discovery := map[string]interface{}{
-		"issuer":                            issuer,
-		"authorization_endpoint":            issuer + "/oauth/authorize",
-		"token_endpoint":                    issuer + "/oauth/token",
-		"userinfo_endpoint":                 issuer + "/oidc/userinfo",
-		"jwks_uri":                          issuer + "/oidc/jwks",
-		"registration_endpoint":             issuer + "/oauth/register",
-		"revocation_endpoint":               issuer + "/oauth/revoke",
-		"introspection_endpoint":            issuer + "/oauth/introspect",
-		"device_authorization_endpoint":     issuer + "/oauth/device",
-		"pushed_authorization_request_endpoint": issuer + "/oauth/par",
-		"backchannel_authentication_endpoint": issuer + "/oauth/bc-authorize",
-		"scopes_supported":                  h.cfg.OIDC.SupportedScopes,
-		"response_types_supported":          []string{"code"},
-		"response_modes_supported":          []string{"query", "fragment"},
-		"grant_types_supported":             h.cfg.OIDC.SupportedGrantTypes,
-		"token_endpoint_auth_methods_supported": h.cfg.OIDC.SupportedAuthMethods,
+		"issuer":                                           issuer,
+		"authorization_endpoint":                           issuer + "/oauth/authorize",
+		"token_endpoint":                                   issuer + "/oauth/token",
+		"userinfo_endpoint":                                issuer + "/oidc/userinfo",
+		"jwks_uri":                                         issuer + "/oidc/jwks",
+		"registration_endpoint":                            issuer + "/oauth/register",
+		"revocation_endpoint":                              issuer + "/oauth/revoke",
+		"introspection_endpoint":                           issuer + "/oauth/introspect",
+		"device_authorization_endpoint":                    issuer + "/oauth/device",
+		"pushed_authorization_request_endpoint":            issuer + "/oauth/par",
+		"backchannel_authentication_endpoint":              issuer + "/oauth/bc-authorize",
+		"scopes_supported":                                 h.cfg.OIDC.SupportedScopes,
+		"response_types_supported":                         []string{"code"},
+		"response_modes_supported":                         []string{"query", "fragment"},
+		"grant_types_supported":                            h.cfg.OIDC.SupportedGrantTypes,
+		"token_endpoint_auth_methods_supported":            h.cfg.OIDC.SupportedAuthMethods,
 		"token_endpoint_auth_signing_alg_values_supported": []string{"RS256", "ES256"},
-		"subject_types_supported":           []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256", "ES256"},
-		"code_challenge_methods_supported":  []string{"S256", "plain"},
-		"claims_supported":                  h.cfg.OIDC.SupportedClaims,
-		"claims_parameter_supported":        true,
-		"request_parameter_supported":       true,
-		"request_uri_parameter_supported":   true,
-		"require_pushed_authorization_requests": false,
-		"backchannel_token_delivery_modes_supported": []string{"poll", "ping"},
-		"backchannel_user_code_parameter_supported":  false,
-		"dpop_signing_alg_values_supported": []string{"ES256"},
+		"subject_types_supported":                          []string{"public"},
+		"id_token_signing_alg_values_supported":            []string{"RS256", "ES256"},
+		"code_challenge_methods_supported":                 []string{"S256", "plain"},
+		"claims_supported":                                 h.cfg.OIDC.SupportedClaims,
+		"claims_parameter_supported":                       true,
+		"request_parameter_supported":                      true,
+		"request_uri_parameter_supported":                  true,
+		"require_pushed_authorization_requests":            false,
+		"backchannel_token_delivery_modes_supported":       []string{"poll", "ping"},
+		"backchannel_user_code_parameter_supported":        false,
+		"dpop_signing_alg_values_supported":                []string{"ES256"},
 	}
 
 	w.Header().Set("Content-Type", "application/json")

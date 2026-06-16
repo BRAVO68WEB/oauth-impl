@@ -13,9 +13,9 @@ import (
 )
 
 type UserService struct {
-	userRepo  *repository.UserRepository
-	totpSvc   *TOTPService
-	cfg       *config.SecurityConfig
+	userRepo *repository.UserRepository
+	totpSvc  *TOTPService
+	cfg      *config.SecurityConfig
 }
 
 func NewUserService(userRepo *repository.UserRepository, totpSvc *TOTPService, cfg *config.SecurityConfig) *UserService {

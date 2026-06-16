@@ -120,14 +120,14 @@ func extractOAuthParamsFromForm(r *http.Request) map[string]string {
 // oauthTemplateData creates template data with OAuth params
 func oauthTemplateData(params map[string]string, extra map[string]interface{}) map[string]interface{} {
 	data := map[string]interface{}{
-		"ClientID":             params["client_id"],
-		"RedirectURI":          params["redirect_uri"],
-		"ResponseType":         params["response_type"],
-		"Scope":                params["scope"],
-		"State":                params["state"],
-		"Nonce":                params["nonce"],
-		"CodeChallenge":        params["code_challenge"],
-		"CodeChallengeMethod":  params["code_challenge_method"],
+		"ClientID":            params["client_id"],
+		"RedirectURI":         params["redirect_uri"],
+		"ResponseType":        params["response_type"],
+		"Scope":               params["scope"],
+		"State":               params["state"],
+		"Nonce":               params["nonce"],
+		"CodeChallenge":       params["code_challenge"],
+		"CodeChallengeMethod": params["code_challenge_method"],
 	}
 	for k, v := range extra {
 		data[k] = v

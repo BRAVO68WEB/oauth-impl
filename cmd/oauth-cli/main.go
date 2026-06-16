@@ -802,10 +802,10 @@ func mfaCmd() *cobra.Command {
 				fmt.Printf("Issuer: OAuthImplServer\n")
 				fmt.Println()
 				fmt.Printf("Enter code to verify: ")
-				
+
 				var code string
-				fmt.Scanln(&code)
-				
+				_, _ = fmt.Scanln(&code)
+
 				if code != "" {
 					verifyResp, err := http.Post(
 						serverURL+"/api/users/"+userID+"/mfa/verify",

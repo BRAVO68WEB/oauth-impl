@@ -44,13 +44,13 @@ func NewHandler(db *database.DB, cfg *config.Config, q *queue.MemoryQueue, oidcH
 }
 
 var validResponseTypes = map[string]bool{
-	"code":                  true,
-	"token":                 true,
-	"id_token":              true,
-	"code id_token":         true,
-	"code token":            true,
-	"code id_token token":   true,
-	"none":                  true,
+	"code":                true,
+	"token":               true,
+	"id_token":            true,
+	"code id_token":       true,
+	"code token":          true,
+	"code id_token token": true,
+	"none":                true,
 }
 
 func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {

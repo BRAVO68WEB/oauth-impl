@@ -698,8 +698,8 @@ func (db *DB) ListAccessTokens(clientID, userID string) ([]*models.AccessToken, 
 func (db *DB) CleanupExpired() error {
 	now := time.Now()
 	tables := []struct {
-		table    string
-		timeCol  string
+		table   string
+		timeCol string
 	}{
 		{"authorization_codes", "expires_at"},
 		{"access_tokens", "expires_at"},
