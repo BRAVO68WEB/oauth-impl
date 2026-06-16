@@ -259,7 +259,7 @@ func (h *Handler) HandleDeviceVerification(w http.ResponseWriter, r *http.Reques
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `<!DOCTYPE html>
+		_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head><title>Device Authorization</title></head>
 <body>
@@ -322,7 +322,7 @@ func (h *Handler) HandleDeviceVerification(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `<!DOCTYPE html>
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head><title>Authorization Approved</title></head>
 <body>

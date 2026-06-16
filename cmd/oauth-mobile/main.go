@@ -75,7 +75,7 @@ func pollForRequests() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var requests []map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&requests); err != nil {
@@ -89,20 +89,20 @@ func pollForRequests() error {
 	fmt.Printf("\n=== %d Pending Request(s) Found ===\n", len(requests))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "ID\tCLIENT\tMESSAGE\tSTATUS\tEXPIRES\n")
+	_, _ = fmt.Fprintf(w, "ID\tCLIENT\tMESSAGE\tSTATUS\tEXPIRES\n")
 	for _, r := range requests {
 		id := r["auth_req_id"].(string)
 		if len(id) > 20 {
 			id = id[:20] + "..."
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			id,
 			r["client_id"],
 			r["binding_message"],
 			r["status"],
 			r["expires_at"])
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	fmt.Println("\nUse 'oauth-mobile approve <id>' or 'oauth-mobile deny <id>' to respond")
 	return nil
@@ -117,7 +117,7 @@ func listCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var requests []map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&requests); err != nil {
@@ -130,20 +130,20 @@ func listCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ID\tCLIENT\tMESSAGE\tSTATUS\tEXPIRES\n")
+			_, _ = fmt.Fprintf(w, "ID\tCLIENT\tMESSAGE\tSTATUS\tEXPIRES\n")
 			for _, r := range requests {
 				id := r["auth_req_id"].(string)
 				if len(id) > 20 {
 					id = id[:20] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 					id,
 					r["client_id"],
 					r["binding_message"],
 					r["status"],
 					r["expires_at"])
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -166,7 +166,7 @@ func approveCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to approve request: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]string
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -203,7 +203,7 @@ func denyCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to deny request: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]string
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -229,7 +229,7 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("server is not reachable: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]string
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

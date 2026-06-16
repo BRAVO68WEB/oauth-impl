@@ -76,9 +76,10 @@ func (h *Handler) ValidateDPoPProof(r *http.Request, accessToken string) (*DPoPC
 			}
 
 			curve := elliptic.P256()
-			if jwk.Crv == "P-384" {
+			switch jwk.Crv {
+			case "P-384":
 				curve = elliptic.P384()
-			} else if jwk.Crv == "P-521" {
+			case "P-521":
 				curve = elliptic.P521()
 			}
 

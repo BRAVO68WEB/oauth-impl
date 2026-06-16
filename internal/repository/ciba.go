@@ -57,7 +57,7 @@ func (r *CIBARepository) GetPending() ([]*models.CIBARequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	requests := make([]*models.CIBARequest, 0)
 	for rows.Next() {

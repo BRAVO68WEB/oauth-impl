@@ -112,7 +112,7 @@ func (r *TokenRepository) ListAccessTokens(clientID, userID string) ([]*models.A
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	tokens := make([]*models.AccessToken, 0)
 	for rows.Next() {

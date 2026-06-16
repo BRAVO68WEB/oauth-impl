@@ -58,7 +58,7 @@ func serverCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("server is not reachable: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]string
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -79,7 +79,7 @@ func serverCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -88,9 +88,9 @@ func serverCmd() *cobra.Command {
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			for k, v := range result {
-				fmt.Fprintf(w, "%s:\t%v\n", k, v)
+				_, _ = fmt.Fprintf(w, "%s:\t%v\n", k, v)
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -113,7 +113,7 @@ func clientCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var clients []map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&clients); err != nil {
@@ -121,12 +121,12 @@ func clientCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ID\tNAME\tGRANT TYPES\tAUTH METHOD\n")
+			_, _ = fmt.Fprintf(w, "ID\tNAME\tGRANT TYPES\tAUTH METHOD\n")
 			for _, c := range clients {
-				fmt.Fprintf(w, "%s\t%s\t%v\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%v\t%s\n",
 					c["id"], c["name"], c["grant_types"], c["token_endpoint_auth_method"])
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -156,7 +156,7 @@ func clientCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -192,7 +192,7 @@ func clientCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -201,9 +201,9 @@ func clientCmd() *cobra.Command {
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			for k, v := range result {
-				fmt.Fprintf(w, "%s:\t%v\n", k, v)
+				_, _ = fmt.Fprintf(w, "%s:\t%v\n", k, v)
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -222,7 +222,7 @@ func clientCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			fmt.Printf("Client %s deleted successfully\n", args[0])
 			return nil
@@ -247,7 +247,7 @@ func userCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var users []map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
@@ -255,12 +255,12 @@ func userCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "ID\tUSERNAME\tEMAIL\n")
+			_, _ = fmt.Fprintf(w, "ID\tUSERNAME\tEMAIL\n")
 			for _, u := range users {
-				fmt.Fprintf(w, "%s\t%s\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
 					u["id"], u["username"], u["email"])
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -288,7 +288,7 @@ func userCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -323,7 +323,7 @@ func userCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -332,9 +332,9 @@ func userCmd() *cobra.Command {
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			for k, v := range result {
-				fmt.Fprintf(w, "%s:\t%v\n", k, v)
+				_, _ = fmt.Fprintf(w, "%s:\t%v\n", k, v)
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -368,7 +368,7 @@ func tokenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var tokens []map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
@@ -376,16 +376,16 @@ func tokenCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "TOKEN\tCLIENT ID\tUSER ID\tTYPE\tEXPIRES\n")
+			_, _ = fmt.Fprintf(w, "TOKEN\tCLIENT ID\tUSER ID\tTYPE\tEXPIRES\n")
 			for _, t := range tokens {
 				token := t["token"].(string)
 				if len(token) > 20 {
 					token = token[:20] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 					token, t["client_id"], t["user_id"], t["token_type"], t["expires_at"])
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -405,7 +405,7 @@ func tokenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -414,9 +414,9 @@ func tokenCmd() *cobra.Command {
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			for k, v := range result {
-				fmt.Fprintf(w, "%s:\t%v\n", k, v)
+				_, _ = fmt.Fprintf(w, "%s:\t%v\n", k, v)
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -435,7 +435,7 @@ func tokenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			fmt.Printf("Token revoked successfully\n")
 			return nil
@@ -460,7 +460,7 @@ func cibaCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var requests []map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&requests); err != nil {
@@ -468,16 +468,16 @@ func cibaCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "AUTH REQ ID\tCLIENT ID\tBINDING MSG\tSTATUS\tEXPIRES\n")
+			_, _ = fmt.Fprintf(w, "AUTH REQ ID\tCLIENT ID\tBINDING MSG\tSTATUS\tEXPIRES\n")
 			for _, r := range requests {
 				authReqID := r["auth_req_id"].(string)
 				if len(authReqID) > 20 {
 					authReqID = authReqID[:20] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 					authReqID, r["client_id"], r["binding_message"], r["status"], r["expires_at"])
 			}
-			w.Flush()
+			_ = w.Flush()
 			return nil
 		},
 	}
@@ -498,7 +498,7 @@ func cibaCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]string
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -528,7 +528,7 @@ func cibaCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]string
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -576,7 +576,7 @@ func flowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -624,7 +624,7 @@ func flowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -765,7 +765,7 @@ func mfaCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to enable MFA: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -815,7 +815,7 @@ func mfaCmd() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("failed to verify MFA: %w", err)
 					}
-					defer verifyResp.Body.Close()
+					defer func() { _ = verifyResp.Body.Close() }()
 
 					var verifyResult map[string]interface{}
 					if err := json.NewDecoder(verifyResp.Body).Decode(&verifyResult); err != nil {
@@ -862,7 +862,7 @@ func mfaCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to verify MFA: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -899,7 +899,7 @@ func mfaCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to check MFA status: %w", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			var result map[string]interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

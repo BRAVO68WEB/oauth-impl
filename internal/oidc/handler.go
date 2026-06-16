@@ -119,11 +119,15 @@ func (ks *KeySet) ToJWKS() JWKS {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 
-	rsaN := base64.RawURLEncoding.EncodeToString(ks.rsaKey.PublicKey.N.Bytes())
+	rsaN := base64.RawURLEncoding.EncodeToString(ks.rsaKey.N.Bytes())
 	rsaE := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(ks.rsaKey.PublicKey.E)).Bytes())
 
-	ecX := base64.RawURLEncoding.EncodeToString(ks.ecKey.PublicKey.X.Bytes())
-	ecY := base64.RawURLEncoding.EncodeToString(ks.ecKey.PublicKey.Y.Bytes())
+	// Get EC public key coordinates via ECDH API (non-deprecated)
+	ecdhKey, _ := ks.ecKey.PublicKey.ECDH()
+	ecPubBytes := ecdhKey.Bytes()
+	// Uncompressed format: 0x04 || X || Y (each 32 bytes for P-256)
+	ecX := base64.RawURLEncoding.EncodeToString(ecPubBytes[1:33])
+	ecY := base64.RawURLEncoding.EncodeToString(ecPubBytes[33:65])
 
 	return JWKS{
 		Keys: []JWK{
