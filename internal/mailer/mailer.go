@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"strconv"
 	"strings"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
@@ -43,7 +44,7 @@ func New(cfg config.SMTPConfig) (Mailer, error) {
 func (m *smtpMailer) Enabled() bool { return true }
 
 func (m *smtpMailer) Send(to, subject, text string) error {
-	addr := fmt.Sprintf("%s:%d", m.cfg.Host, m.cfg.Port)
+	addr := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
 	var conn net.Conn
 	var err error
 	tlsConfig := &tls.Config{ServerName: m.cfg.Host}

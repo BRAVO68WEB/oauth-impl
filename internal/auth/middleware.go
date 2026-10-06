@@ -128,5 +128,5 @@ func writeAuthError(w http.ResponseWriter, status int, code, description string)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="%s", error_description="%s"`, code, description))
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"%s","error_description":"%s"}`+"\n", code, description)))
+	_, _ = fmt.Fprintf(w, `{"error":"%s","error_description":"%s"}`+"\n", code, description)
 }

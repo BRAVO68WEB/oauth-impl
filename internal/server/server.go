@@ -672,52 +672,6 @@ func (s *Server) handleCIBADeny(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head><title>Login</title></head>
-<body>
-<h1>Login</h1>
-<form method="POST" action="/oauth/authorize">
-	<label>Username: <input type="text" name="username" required></label><br>
-	<label>Password: <input type="password" name="password" required></label><br>
-	<input type="hidden" name="client_id" value="%s">
-	<input type="hidden" name="redirect_uri" value="%s">
-	<input type="hidden" name="response_type" value="%s">
-	<input type="hidden" name="scope" value="%s">
-	<input type="hidden" name="state" value="%s">
-	<button type="submit">Login</button>
-</form>
-</body>
-</html>`,
-		r.URL.Query().Get("client_id"),
-		r.URL.Query().Get("redirect_uri"),
-		r.URL.Query().Get("response_type"),
-		r.URL.Query().Get("scope"),
-		r.URL.Query().Get("state"),
-	)
-}
-
-func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head><title>Register</title></head>
-<body>
-<h1>Register</h1>
-<form method="POST" action="/api/users">
-	<label>Username: <input type="text" name="username" required></label><br>
-	<label>Password: <input type="password" name="password" required></label><br>
-	<label>Email: <input type="email" name="email"></label><br>
-	<button type="submit">Register</button>
-</form>
-</body>
-</html>`)
-}
-
 func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)

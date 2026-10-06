@@ -124,7 +124,7 @@ func (a *AccountService) Register(username, password, email, phone string) (*mod
 		return nil, err
 	}
 	if email != "" {
-		a.sendVerify(user)
+		_ = a.sendVerify(user)
 	}
 	a.emit(EventUserRegistered, map[string]any{
 		"user_id": user.ID, "username": user.Username, "email": user.Email,

@@ -116,12 +116,24 @@ func parseJWK(raw json.RawMessage) (string, any, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		return meta.Kid, &ecdsa.PublicKey{
-			Curve: elliptic.P256(),
-			X:     new(big.Int).SetBytes(xBytes),
-			Y:     new(big.Int).SetBytes(yBytes),
-		}, nil
+		pub, err := ecPublicKey(elliptic.P256(), xBytes, yBytes)
+		if err != nil {
+			return "", nil, err
+		}
+		return meta.Kid, pub, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported key type")
 	}
+}
+
+func ecPublicKey(curve elliptic.Curve, x, y []byte) (*ecdsa.PublicKey, error) {
+	size := (curve.Params().BitSize + 7) / 8
+	if len(x) == 0 || len(y) == 0 || len(x) > size || len(y) > size {
+		return nil, fmt.Errorf("invalid EC coordinates")
+	}
+	raw := make([]byte, 1+2*size)
+	raw[0] = 4
+	copy(raw[1+size-len(x):1+size], x)
+	copy(raw[1+2*size-len(y):], y)
+	return ecdsa.ParseUncompressedPublicKey(curve, raw)
 }

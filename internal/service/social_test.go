@@ -72,7 +72,7 @@ func TestSocialRegistrationFlags(t *testing.T) {
 	defer upstream.Close()
 	cfg := config.DefaultConfig()
 	cfg.Security.DisableSocialRegistration = true
-	svc, users, repo := newSocialTest(t, upstream, cfg)
+	svc, users, _ := newSocialTest(t, upstream, cfg)
 	if _, _, err := beginAndComplete(t, svc, "code-1"); err != ErrSocialRegistrationDisabled {
 		t.Fatalf("err = %v", err)
 	}
@@ -83,14 +83,14 @@ func TestSocialRegistrationFlags(t *testing.T) {
 
 	cfg.Security.DisableSocialRegistration = false
 	cfg.Security.DisableRegistration = true
-	svc, users, _ = newSocialTest(t, upstream, cfg)
+	svc, _, _ = newSocialTest(t, upstream, cfg)
 	if _, _, err := beginAndComplete(t, svc, "code-2"); err != ErrSocialRegistrationDisabled {
 		t.Fatalf("disable_registration err = %v", err)
 	}
 
 	cfg = config.DefaultConfig()
 	cfg.Security.DisableSocialRegistration = true
-	svc, users, repo = newSocialTest(t, upstream, cfg)
+	svc, users, repo := newSocialTest(t, upstream, cfg)
 	existing, err := users.CreateUser("ada", "correct horse", "ada@example.com", "")
 	if err != nil {
 		t.Fatal(err)

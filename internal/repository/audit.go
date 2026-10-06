@@ -58,7 +58,7 @@ func (r *AuditRepository) List(action, actorID string, since time.Time) ([]Audit
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []AuditRow
 	for rows.Next() {
 		var row AuditRow

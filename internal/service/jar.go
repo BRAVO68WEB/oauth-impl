@@ -292,12 +292,17 @@ func parseECJWK(key JWK) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("unsupported EC curve: %s", key.Crv)
 	}
 
-	x := new(big.Int).SetBytes(xBytes)
-	y := new(big.Int).SetBytes(yBytes)
+	return ecPublicKey(curve, xBytes, yBytes)
+}
 
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     x,
-		Y:     y,
-	}, nil
+func ecPublicKey(curve elliptic.Curve, x, y []byte) (*ecdsa.PublicKey, error) {
+	size := (curve.Params().BitSize + 7) / 8
+	if len(x) == 0 || len(y) == 0 || len(x) > size || len(y) > size {
+		return nil, fmt.Errorf("invalid EC coordinates")
+	}
+	raw := make([]byte, 1+2*size)
+	raw[0] = 4
+	copy(raw[1+size-len(x):1+size], x)
+	copy(raw[1+2*size-len(y):], y)
+	return ecdsa.ParseUncompressedPublicKey(curve, raw)
 }

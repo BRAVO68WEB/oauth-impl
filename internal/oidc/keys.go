@@ -31,7 +31,7 @@ func LoadKeySet(db *sql.DB) (*KeySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var kid, alg, status, pemText, retire string
 		if err := rows.Scan(&kid, &alg, &status, &pemText, &retire); err != nil {
@@ -185,17 +185,6 @@ func (ks *KeySet) publicByKid(kid string) (any, bool) {
 	return nil, false
 }
 
-func (ks *KeySet) keyByKid(kid string) *storedKey {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
-	for i := range ks.keys {
-		if ks.keys[i].Kid == kid {
-			return &ks.keys[i]
-		}
-	}
-	return nil
-}
-
 func (ks *KeySet) ToJWKS() JWKS {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
@@ -215,7 +204,7 @@ func publicJWK(key storedKey) JWK {
 		return JWK{
 			Kty: "RSA", Kid: key.Kid, Use: "sig", Alg: "RS256",
 			N: base64.RawURLEncoding.EncodeToString(key.RSA.N.Bytes()),
-			E: base64.RawURLEncoding.EncodeToString(bigIntBytes(key.RSA.PublicKey.E)),
+			E: base64.RawURLEncoding.EncodeToString(bigIntBytes(key.RSA.E)),
 		}
 	}
 	ecdhKey, _ := key.EC.PublicKey.ECDH()

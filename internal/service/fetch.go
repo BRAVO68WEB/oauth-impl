@@ -69,7 +69,7 @@ func FetchSafe(ctx context.Context, cfg *config.Config, method, rawURL string, b
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, fetchLimit+1))
 	if err != nil {
 		return nil, resp.StatusCode, err

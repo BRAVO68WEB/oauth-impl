@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -249,14 +248,7 @@ func (s *DPoPService) parseJWK(jwkRaw map[string]interface{}) (*ecdsa.PublicKey,
 		return nil, fmt.Errorf("unsupported curve: %s", crv)
 	}
 
-	x := new(big.Int).SetBytes(xBytes)
-	y := new(big.Int).SetBytes(yBytes)
-
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     x,
-		Y:     y,
-	}, nil
+	return ecPublicKey(curve, xBytes, yBytes)
 }
 
 func (s *DPoPService) validateATH(ath string, accessToken string) error {

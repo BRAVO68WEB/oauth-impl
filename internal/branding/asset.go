@@ -37,7 +37,7 @@ func AssetHandler(cfg *config.Config) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		w.Header().Set("Content-Type", ctype)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'none'; sandbox")
@@ -52,7 +52,7 @@ func AssetExists(dir, name string) bool {
 	if err != nil {
 		return false
 	}
-	f.Close()
+	_ = f.Close()
 	return true
 }
 
