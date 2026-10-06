@@ -1,21 +1,19 @@
 package repository
 
 import (
-	"database/sql"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type LoginEventRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewLoginEventRepository(db *sql.DB) *LoginEventRepository {
+func NewLoginEventRepository(db database.SQL) *LoginEventRepository {
 	return &LoginEventRepository{db: db}
 }
 
@@ -47,9 +45,11 @@ func (r *LoginEventRepository) ListByUser(userID string, limit int) ([]*models.L
 	for rows.Next() {
 		ev := &models.LoginEvent{}
 		var success, mfa int
-		if err := rows.Scan(&ev.ID, &ev.UserID, &success, &mfa, &ev.IP, &ev.UserAgent, &ev.CreatedAt); err != nil {
+		var created dbTime
+		if err := rows.Scan(&ev.ID, &ev.UserID, &success, &mfa, &ev.IP, &ev.UserAgent, &created); err != nil {
 			return nil, err
 		}
+		ev.CreatedAt = created.Time
 		ev.Success = success != 0
 		ev.MFA = mfa != 0
 		out = append(out, ev)
@@ -152,18 +152,12 @@ func (r *LoginEventRepository) ipStats(where string, args []any, userID string, 
 	var stats []models.IPLoginStat
 	for rows.Next() {
 		var row models.IPLoginStat
-		var first, last string
+		var first, last dbTime
 		if err := rows.Scan(&row.IP, &row.Attempts, &row.Successes, &row.Failures, &row.MFA, &row.Users, &first, &last); err != nil {
 			return nil, err
 		}
-		row.FirstSeen, err = parseDBTime(first)
-		if err != nil {
-			return nil, err
-		}
-		row.LastSeen, err = parseDBTime(last)
-		if err != nil {
-			return nil, err
-		}
+		row.FirstSeen = first.Time
+		row.LastSeen = last.Time
 		stats = append(stats, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -206,15 +200,12 @@ func (r *LoginEventRepository) firstSeen(userID string) (map[string]time.Time, e
 	defer func() { _ = rows.Close() }()
 	out := map[string]time.Time{}
 	for rows.Next() {
-		var ip, raw string
-		if err := rows.Scan(&ip, &raw); err != nil {
+		var ip string
+		var at dbTime
+		if err := rows.Scan(&ip, &at); err != nil {
 			return nil, err
 		}
-		at, err := parseDBTime(raw)
-		if err != nil {
-			return nil, err
-		}
-		out[ip] = at
+		out[ip] = at.Time
 	}
 	return out, rows.Err()
 }
@@ -245,10 +236,14 @@ func (r *LoginEventRepository) lastAgents(where string, args []any) (map[string]
 }
 
 func (r *LoginEventRepository) dayStats(where string, args []any) ([]models.DayLoginStat, error) {
-	rows, err := r.db.Query(`SELECT substr(created_at, 1, 10),
+	day := `substr(created_at, 1, 10)`
+	if r.db.Dialect() == "postgres" {
+		day = `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')`
+	}
+	rows, err := r.db.Query(`SELECT `+day+`,
 		COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0)
-		FROM login_events WHERE `+where+` GROUP BY substr(created_at, 1, 10) ORDER BY substr(created_at, 1, 10)`, args...)
+		FROM login_events WHERE `+where+` GROUP BY `+day+` ORDER BY `+day, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -262,25 +257,4 @@ func (r *LoginEventRepository) dayStats(where string, args []any) ([]models.DayL
 		out = append(out, row)
 	}
 	return out, rows.Err()
-}
-
-func parseDBTime(value string) (time.Time, error) {
-	if i := strings.Index(value, " m="); i >= 0 {
-		value = value[:i]
-	}
-	layouts := []string{
-		"2006-01-02 15:04:05.999999999 -0700 MST",
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05",
-		"2006-01-02T15:04:05Z",
-	}
-	for _, layout := range layouts {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("parse time %q", value)
 }

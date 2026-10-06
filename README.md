@@ -570,6 +570,12 @@ npm test
 
 `e2e/` starts `oauth-server` in separate modes: standard grants, CIBA, refresh and signing-key rotation, webhooks, brute-force detection, password complexity, required PKCE, closed registration, MFA enrollment, forced DPoP, CIMD, and JWT access tokens (`security.access_token_format: jwt`). The default access token format stays `opaque`.
 
+## Database and Redis
+
+`database.driver` is `sqlite` or `postgres`. SQLite is the default and uses `database.path` (default `./oauth.db`). Postgres uses `database.dsn`, for example `postgres://oauth:oauth@localhost:5432/oauth?sslmode=disable`.
+
+`queue.type` and `cache.provider` are `memory` or `redis`. Leave `redis.addr` empty to keep the CIBA and device queue, the CIMD document cache, and the DPoP replay cache in the server process. Set `redis.addr` and switch either setting to `redis` when more than one server process must share that state. Tokens, users, and sessions stay in the SQL database.
+
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE).

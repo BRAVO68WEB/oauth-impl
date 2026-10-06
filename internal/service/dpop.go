@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,15 +11,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/bravo68web/oauth-impl/internal/cache"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
 type DPoPService struct {
-	usedJTIs map[string]time.Time
-	mu       sync.RWMutex
+	replay cache.Cache
 }
 
 type DPoPProof struct {
@@ -39,9 +40,14 @@ type DPoPJWK struct {
 }
 
 func NewDPoPService() *DPoPService {
-	return &DPoPService{
-		usedJTIs: make(map[string]time.Time),
+	return NewDPoPServiceWithCache(cache.NewMemory())
+}
+
+func NewDPoPServiceWithCache(store cache.Cache) *DPoPService {
+	if store == nil {
+		store = cache.NewMemory()
 	}
+	return &DPoPService{replay: store}
 }
 
 // ValidateDPoPProof validates a DPoP proof JWT
@@ -268,30 +274,17 @@ func (s *DPoPService) computeATH(accessToken string) string {
 }
 
 func (s *DPoPService) checkReplay(jti string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check if JTI was already used
-	if _, exists := s.usedJTIs[jti]; exists {
+	if s == nil || s.replay == nil {
+		return fmt.Errorf("DPoP replay cache is not configured")
+	}
+	ok, err := s.replay.Add(context.Background(), "dpop:jti:"+jti, []byte("1"), 10*time.Minute)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return fmt.Errorf("DPoP proof replay detected")
 	}
-
-	// Store JTI with expiration
-	s.usedJTIs[jti] = time.Now()
-
-	// Cleanup old JTIs (older than 10 minutes)
-	s.cleanupOldJTIs()
-
 	return nil
-}
-
-func (s *DPoPService) cleanupOldJTIs() {
-	cutoff := time.Now().Add(-10 * time.Minute)
-	for jti, t := range s.usedJTIs {
-		if t.Before(cutoff) {
-			delete(s.usedJTIs, jti)
-		}
-	}
 }
 
 func (s *DPoPService) normalizeURI(uri string) string {

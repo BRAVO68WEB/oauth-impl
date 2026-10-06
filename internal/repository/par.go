@@ -1,16 +1,16 @@
 package repository
 
 import (
-	"database/sql"
+	"github.com/bravo68web/oauth-impl/internal/database"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type PARRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewPARRepository(db *sql.DB) *PARRepository {
+func NewPARRepository(db database.SQL) *PARRepository {
 	return &PARRepository{db: db}
 }
 

@@ -6,10 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"database/sql"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 )
 
@@ -22,7 +22,7 @@ type storedKey struct {
 	RetireAt time.Time
 }
 
-func LoadKeySet(db *sql.DB) (*KeySet, error) {
+func LoadKeySet(db database.SQL) (*KeySet, error) {
 	ks := &KeySet{db: db}
 	if db == nil {
 		return newMemoryKeySet()

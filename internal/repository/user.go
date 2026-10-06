@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
@@ -59,10 +60,10 @@ func scanUser(scan func(dest ...any) error) (*models.User, error) {
 }
 
 type UserRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewUserRepository(db *sql.DB) *UserRepository {
+func NewUserRepository(db database.SQL) *UserRepository {
 	return &UserRepository{db: db}
 }
 
@@ -78,7 +79,7 @@ func (r *UserRepository) Create(user *models.User) error {
 	_, err := r.db.Exec(query,
 		user.ID, user.Username, user.PasswordHash,
 		user.Email, user.PhoneNumber, user.CreatedAt,
-		user.EmailVerified, user.Disabled, user.GivenName, user.FamilyName, string(rawAttrs),
+		boolInt(user.EmailVerified), boolInt(user.Disabled), user.GivenName, user.FamilyName, string(rawAttrs),
 	)
 	return err
 }
@@ -117,7 +118,7 @@ func (r *UserRepository) UpdateProfile(user *models.User) error {
 	res, err := r.db.Exec(`UPDATE users SET email = ?, phone_number = ?, given_name = ?, family_name = ?,
 		email_verified = ?, disabled = ? WHERE id = ?`,
 		user.Email, user.PhoneNumber, user.GivenName, user.FamilyName,
-		user.EmailVerified, user.Disabled, user.ID,
+		boolInt(user.EmailVerified), boolInt(user.Disabled), user.ID,
 	)
 	if err != nil {
 		return err
@@ -154,16 +155,16 @@ func (r *UserRepository) UpdatePasswordHash(id, hash string) error {
 
 func (r *UserRepository) UpdateMFA(id string, mfaEnabled bool, mfaSecret string) error {
 	query := `UPDATE users SET mfa_enabled = ?, mfa_secret = ?, mfa_pending_secret = NULL WHERE id = ?`
-	_, err := r.db.Exec(query, mfaEnabled, mfaSecret, id)
+	_, err := r.db.Exec(query, boolInt(mfaEnabled), mfaSecret, id)
 	return err
 }
 
 func (r *UserRepository) GetMFA(id string) (bool, string, error) {
 	query := `SELECT mfa_enabled, COALESCE(mfa_secret, '') FROM users WHERE id = ?`
-	var mfaEnabled bool
+	var mfaEnabled bit
 	var mfaSecret string
 	err := r.db.QueryRow(query, id).Scan(&mfaEnabled, &mfaSecret)
-	return mfaEnabled, mfaSecret, err
+	return mfaEnabled.Bool(), mfaSecret, err
 }
 
 func (r *UserRepository) SavePendingSecret(id string, secret string) error {

@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 
 	"github.com/google/uuid"
 
@@ -10,10 +11,10 @@ import (
 )
 
 type TokenRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewTokenRepository(db *sql.DB) *TokenRepository {
+func NewTokenRepository(db database.SQL) *TokenRepository {
 	return &TokenRepository{db: db}
 }
 
@@ -25,7 +26,7 @@ func (r *TokenRepository) SaveAccessToken(token *models.AccessToken) error {
 	_, err := r.db.Exec(query,
 		token.Token, token.ClientID, token.UserID,
 		string(scopes), token.TokenType, token.DPoPJKT,
-		token.ExpiresAt, token.Revoked,
+		token.ExpiresAt, boolInt(token.Revoked),
 	)
 	return err
 }
@@ -36,11 +37,12 @@ func (r *TokenRepository) GetAccessToken(token string) (*models.AccessToken, err
 
 	at := &models.AccessToken{}
 	var scopes string
+	var revoked bit
 
 	err := r.db.QueryRow(query, token).Scan(
 		&at.Token, &at.ClientID, &at.UserID,
 		&scopes, &at.TokenType, &at.DPoPJKT,
-		&at.ExpiresAt, &at.Revoked,
+		&at.ExpiresAt, &revoked,
 	)
 	if err != nil {
 		return nil, err
@@ -49,6 +51,7 @@ func (r *TokenRepository) GetAccessToken(token string) (*models.AccessToken, err
 	if err := json.Unmarshal([]byte(scopes), &at.Scopes); err != nil {
 		return nil, err
 	}
+	at.Revoked = revoked.Bool()
 	return at, nil
 }
 
@@ -70,7 +73,7 @@ func (r *TokenRepository) SaveRefreshToken(token *models.RefreshToken) error {
 
 	_, err := r.db.Exec(query,
 		token.ID, token.Token, token.AccessToken, token.ClientID,
-		token.UserID, string(scopes), token.FamilyID, token.ExpiresAt, token.Revoked,
+		token.UserID, string(scopes), token.FamilyID, token.ExpiresAt, boolInt(token.Revoked),
 	)
 	return err
 }
@@ -79,15 +82,17 @@ func scanRefresh(scan func(dest ...any) error) (*models.RefreshToken, error) {
 	rt := &models.RefreshToken{}
 	var scopes string
 	var id, family, userID sql.NullString
+	var revoked bit
 	if err := scan(
 		&id, &rt.Token, &rt.AccessToken, &rt.ClientID,
-		&userID, &scopes, &family, &rt.ExpiresAt, &rt.Revoked,
+		&userID, &scopes, &family, &rt.ExpiresAt, &revoked,
 	); err != nil {
 		return nil, err
 	}
 	rt.ID = id.String
 	rt.FamilyID = family.String
 	rt.UserID = userID.String
+	rt.Revoked = revoked.Bool()
 	if err := json.Unmarshal([]byte(scopes), &rt.Scopes); err != nil {
 		return nil, err
 	}
@@ -252,14 +257,16 @@ func (r *TokenRepository) ListAccessTokens(clientID, userID string) ([]*models.A
 	for rows.Next() {
 		at := &models.AccessToken{}
 		var scopes string
+		var revoked bit
 		err := rows.Scan(
 			&at.Token, &at.ClientID, &at.UserID,
 			&scopes, &at.TokenType, &at.DPoPJKT,
-			&at.ExpiresAt, &at.Revoked,
+			&at.ExpiresAt, &revoked,
 		)
 		if err != nil {
 			return nil, err
 		}
+		at.Revoked = revoked.Bool()
 		if err := json.Unmarshal([]byte(scopes), &at.Scopes); err != nil {
 			return nil, err
 		}

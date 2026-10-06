@@ -132,7 +132,7 @@ func newSocialTest(t *testing.T, upstream *httptest.Server, cfg *config.Config) 
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	conn := db.Conn()
+	conn := db
 	cfg.Security.Issuer = "http://localhost:8080"
 	cfg.Social.Providers = []config.SocialProvider{{
 		ID: "acme", Type: "oauth2", Enabled: true, ClientID: "cid", ClientSecret: "sec",

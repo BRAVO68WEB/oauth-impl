@@ -15,6 +15,8 @@ import (
 type Config struct {
 	Server       ServerConfig       `yaml:"server"`
 	Database     DatabaseConfig     `yaml:"database"`
+	Redis        RedisConfig        `yaml:"redis"`
+	Cache        CacheConfig        `yaml:"cache"`
 	Security     SecurityConfig     `yaml:"security"`
 	Queue        QueueConfig        `yaml:"queue"`
 	OIDC         OIDCConfig         `yaml:"oidc"`
@@ -41,8 +43,22 @@ type TLSConfig struct {
 }
 
 type DatabaseConfig struct {
+	Driver     string `yaml:"driver"`
 	Path       string `yaml:"path"`
+	DSN        string `yaml:"dsn"`
 	Migrations bool   `yaml:"migrations"`
+}
+
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	Prefix   string `yaml:"prefix"`
+}
+
+type CacheConfig struct {
+	Provider string `yaml:"provider"`
 }
 
 type SecurityConfig struct {
@@ -212,9 +228,12 @@ func DefaultConfig() *Config {
 			},
 		},
 		Database: DatabaseConfig{
+			Driver:     "sqlite",
 			Path:       "./oauth.db",
 			Migrations: true,
 		},
+		Redis: RedisConfig{Prefix: "oauth"},
+		Cache: CacheConfig{Provider: "memory"},
 		Security: SecurityConfig{
 			AccessTokenLifetime:       3600 * time.Second,
 			RefreshTokenLifetime:      86400 * time.Second,
@@ -588,6 +607,30 @@ func ValidatePlatform(cfg *Config) error {
 	}
 	if bot != "" && (cfg.Security.BotProtection.SiteKey == "" || cfg.Security.BotProtection.SecretKey == "") {
 		return fmt.Errorf("security.bot_protection requires site_key and secret_key")
+	}
+	switch cfg.Database.Driver {
+	case "", "sqlite", "postgres":
+	default:
+		return fmt.Errorf("database.driver must be sqlite or postgres")
+	}
+	if cfg.Database.Driver == "postgres" && strings.TrimSpace(cfg.Database.DSN) == "" {
+		return fmt.Errorf("database.dsn is required for postgres")
+	}
+	if (cfg.Database.Driver == "" || cfg.Database.Driver == "sqlite") && strings.TrimSpace(cfg.Database.Path) == "" {
+		return fmt.Errorf("database.path is required for sqlite")
+	}
+	switch cfg.Cache.Provider {
+	case "", "memory", "redis":
+	default:
+		return fmt.Errorf("cache.provider must be memory or redis")
+	}
+	switch cfg.Queue.Type {
+	case "", "memory", "redis":
+	default:
+		return fmt.Errorf("queue.type must be memory or redis")
+	}
+	if (cfg.Cache.Provider == "redis" || cfg.Queue.Type == "redis") && strings.TrimSpace(cfg.Redis.Addr) == "" {
+		return fmt.Errorf("redis.addr is required when cache.provider or queue.type is redis")
 	}
 	for _, m := range cfg.OIDC.ClaimMappings {
 		if m.Claim == "" || reservedClaims[m.Claim] {

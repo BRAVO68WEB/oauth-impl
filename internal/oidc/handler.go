@@ -2,7 +2,6 @@ package oidc
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -34,7 +33,7 @@ func (h *Handler) SetDPoPCheck(fn func(header, method, uri, accessToken string) 
 
 type KeySet struct {
 	mu   sync.RWMutex
-	db   *sql.DB
+	db   database.SQL
 	keys []storedKey
 }
 
@@ -55,11 +54,11 @@ type JWKS struct {
 }
 
 func NewHandler(db *database.DB, cfg *config.Config) (*Handler, error) {
-	var conn *sql.DB
+	var handle database.SQL
 	if db != nil {
-		conn = db.Conn()
+		handle = db
 	}
-	keySet, err := LoadKeySet(conn)
+	keySet, err := LoadKeySet(handle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key set: %w", err)
 	}

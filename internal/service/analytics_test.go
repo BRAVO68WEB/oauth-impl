@@ -24,9 +24,9 @@ func TestLoginAnalyticsGroupsIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.DefaultConfig()
-	repo := repository.NewLoginEventRepository(db.Conn())
-	users := NewUserService(repository.NewUserRepository(db.Conn()), nil, &cfg.Security, passhash.Bcrypt(bcrypt.MinCost))
-	account := NewAccountService(users, repository.NewUserRepository(db.Conn()), repository.NewEmailTokenRepository(db.Conn()), repo, NewSessionService(repository.NewSessionRepository(db.Conn()), time.Hour), repository.NewTokenRepository(db.Conn()), nil, nil, cfg)
+	repo := repository.NewLoginEventRepository(db)
+	users := NewUserService(repository.NewUserRepository(db), nil, &cfg.Security, passhash.Bcrypt(bcrypt.MinCost))
+	account := NewAccountService(users, repository.NewUserRepository(db), repository.NewEmailTokenRepository(db), repo, NewSessionService(repository.NewSessionRepository(db), time.Hour), repository.NewTokenRepository(db), nil, nil, cfg)
 	user, err := users.CreateUser("ada", "correct horse", "ada@example.com", "")
 	if err != nil {
 		t.Fatal(err)

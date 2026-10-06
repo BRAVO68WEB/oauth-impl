@@ -1,16 +1,16 @@
 package repository
 
 import (
-	"database/sql"
+	"github.com/bravo68web/oauth-impl/internal/database"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type DPoPRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewDPoPRepository(db *sql.DB) *DPoPRepository {
+func NewDPoPRepository(db database.SQL) *DPoPRepository {
 	return &DPoPRepository{db: db}
 }
 

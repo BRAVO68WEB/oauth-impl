@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 )
 
@@ -18,10 +19,10 @@ type SocialLogin struct {
 }
 
 type SocialRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewSocialRepository(db *sql.DB) *SocialRepository {
+func NewSocialRepository(db database.SQL) *SocialRepository {
 	return &SocialRepository{db: db}
 }
 
@@ -49,10 +50,12 @@ func (r *SocialRepository) Consume(state, provider string) (SocialLogin, error) 
 	if n == 0 {
 		return SocialLogin{}, sql.ErrNoRows
 	}
-	var raw, exp string
+	var raw string
+	var exp dbTime
+	var used bit
 	row := SocialLogin{Params: map[string]string{}}
 	err = r.db.QueryRow(`SELECT state, provider, verifier, nonce, params_json, expires_at, used FROM social_logins WHERE state = ?`, state).
-		Scan(&row.State, &row.Provider, &row.Verifier, &row.Nonce, &raw, &exp, &row.Used)
+		Scan(&row.State, &row.Provider, &row.Verifier, &row.Nonce, &raw, &exp, &used)
 	if err != nil {
 		return SocialLogin{}, err
 	}
@@ -61,10 +64,8 @@ func (r *SocialRepository) Consume(state, provider string) (SocialLogin, error) 
 			return SocialLogin{}, err
 		}
 	}
-	row.ExpiresAt, err = time.Parse(time.RFC3339, exp)
-	if err != nil {
-		return SocialLogin{}, err
-	}
+	row.ExpiresAt = exp.Time
+	row.Used = used.Bool()
 	return row, nil
 }
 

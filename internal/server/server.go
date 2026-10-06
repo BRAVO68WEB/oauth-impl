@@ -38,7 +38,7 @@ import (
 type Server struct {
 	cfg          *config.Config
 	db           *database.DB
-	queue        *queue.MemoryQueue
+	queue        queue.Queue
 	router       *chi.Mux
 	server       *http.Server
 	oauthHandler *oauth.Handler
@@ -58,8 +58,8 @@ type Server struct {
 	audit        *service.AuditLog
 }
 
-func New(cfg *config.Config, db *database.DB, q *queue.MemoryQueue) (*Server, error) {
-	conn := db.Conn()
+func New(cfg *config.Config, db *database.DB, q queue.Queue) (*Server, error) {
+	conn := db
 
 	// Repositories
 	clientRepo := repository.NewClientRepository(conn)

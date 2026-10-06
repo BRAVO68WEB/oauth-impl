@@ -7,16 +7,17 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type EmailTokenRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewEmailTokenRepository(db *sql.DB) *EmailTokenRepository {
+func NewEmailTokenRepository(db database.SQL) *EmailTokenRepository {
 	return &EmailTokenRepository{db: db}
 }
 

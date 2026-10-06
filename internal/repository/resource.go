@@ -1,18 +1,18 @@
 package repository
 
 import (
-	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type ResourceRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewResourceRepository(db *sql.DB) *ResourceRepository {
+func NewResourceRepository(db database.SQL) *ResourceRepository {
 	return &ResourceRepository{db: db}
 }
 

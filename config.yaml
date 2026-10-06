@@ -11,7 +11,9 @@ server:
     crl_file: "./certs/crl.pem"
 
 database:
+  driver: sqlite
   path: "./oauth.db"
+  dsn: ""
   migrations: true
 
 security:
@@ -102,6 +104,16 @@ branding:
 registration:
   dcr_enabled: true
   cimd_enabled: false
+
+redis:
+  addr: ""
+  username: ""
+  password: ""
+  db: 0
+  prefix: oauth
+
+cache:
+  provider: memory
 
 queue:
   type: "memory"

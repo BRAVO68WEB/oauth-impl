@@ -14,6 +14,7 @@ import (
 
 	root "github.com/bravo68web/oauth-impl"
 	"github.com/bravo68web/oauth-impl/internal/auth"
+	"github.com/bravo68web/oauth-impl/internal/cache"
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/database"
@@ -25,6 +26,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/route"
 	"github.com/bravo68web/oauth-impl/internal/service"
+	"github.com/redis/go-redis/v9"
 )
 
 func loadRuntimeConfig(flagPath string) (*config.Config, error) {
@@ -96,7 +98,7 @@ func main() {
 	}
 
 	// Database
-	db, err := database.New(cfg.Database.Path)
+	db, err := database.Open(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -109,7 +111,7 @@ func main() {
 		log.Println("Database migrations completed")
 	}
 
-	conn := db.Conn()
+	conn := db
 	if err := service.SeedManagementClient(repository.NewClientRepository(conn), cfg); err != nil {
 		log.Fatalf("management client: %v", err)
 	}
@@ -140,15 +142,34 @@ func main() {
 		log.Fatalf("smtp: %v", err)
 	}
 
-	// Queue
-	q := queue.NewMemoryQueue(cfg.Queue.MaxPending)
+	var rdb *redis.Client
+	if cfg.Cache.Provider == "redis" || cfg.Queue.Type == "redis" {
+		rdb, err = cache.NewClient(cfg.Redis)
+		if err != nil {
+			log.Fatalf("redis: %v", err)
+		}
+		defer func() { _ = rdb.Close() }()
+	}
+	store := cache.Cache(cache.NewMemory())
+	if cfg.Cache.Provider == "redis" {
+		store = cache.NewRedis(rdb, cfg.Redis.Prefix)
+	}
+	var q queue.Queue
+	switch cfg.Queue.Type {
+	case "", "memory":
+		q = queue.NewMemoryQueue(cfg.Queue.MaxPending)
+	case "redis":
+		q = queue.NewRedis(rdb, cfg.Redis.Prefix, cfg.Queue.MaxPending)
+	default:
+		log.Fatalf("queue.type must be memory or redis")
+	}
 
 	// Services
 	totpSvc := service.NewTOTPService(userRepo, &cfg.Security.MFA)
 	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security, hasher)
 	clientSvc := service.NewClientService(clientRepo)
 	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
-	dpopSvc := service.NewDPoPService()
+	dpopSvc := service.NewDPoPServiceWithCache(store)
 	mtlsSvc := service.NewMTLSService()
 	jarSvc := service.NewJARService(cfg.Security.Issuer)
 	sessionSvc := service.NewSessionService(sessionRepo, cfg.Security.SessionLifetime)
@@ -176,6 +197,7 @@ func main() {
 
 	// OAuth handler
 	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler, userSvc, sessionSvc, logoutSvc, accountSvc)
+	oauthHandler.SetCache(store)
 	oauthHandler.SetWebhooks(hooks)
 
 	// Controllers

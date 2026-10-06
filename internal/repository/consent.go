@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
@@ -10,10 +11,10 @@ import (
 )
 
 type ConsentRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewConsentRepository(db *sql.DB) *ConsentRepository {
+func NewConsentRepository(db database.SQL) *ConsentRepository {
 	return &ConsentRepository{db: db}
 }
 
@@ -24,8 +25,9 @@ func (r *ConsentRepository) Save(userID, clientID string, scopes []string) error
 	}
 
 	id := uuid.New().String()
-	query := `INSERT OR REPLACE INTO consents (id, user_id, client_id, scopes, granted_at)
-		VALUES (?, ?, ?, ?, ?)`
+	query := `INSERT INTO consents (id, user_id, client_id, scopes, granted_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = excluded.scopes, granted_at = excluded.granted_at`
 
 	_, err = r.db.Exec(query, id, userID, clientID, string(scopesJSON), time.Now())
 	return err

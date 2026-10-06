@@ -103,7 +103,7 @@ func TestAuditOmitsSecrets(t *testing.T) {
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	log := NewAuditLog(repository.NewAuditRepository(db.Conn()))
+	log := NewAuditLog(repository.NewAuditRepository(db))
 	log.Write("client", "mgmt", "client.create", "client", "app", nil, map[string]any{
 		"name": "App", "secret": "s3cret", "client_secret": "nope",
 	})

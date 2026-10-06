@@ -1,19 +1,19 @@
 package repository
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type WebhookRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewWebhookRepository(db *sql.DB) *WebhookRepository {
+func NewWebhookRepository(db database.SQL) *WebhookRepository {
 	return &WebhookRepository{db: db}
 }
 

@@ -1,20 +1,67 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
-type DB struct {
-	conn *sql.DB
+// SQL is the query handle repositories use. Postgres placeholders are rewritten.
+type SQL interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+	Dialect() string
 }
 
+func (db *DB) Dialect() string {
+	if db == nil || db.driver == "" {
+		return "sqlite"
+	}
+	return db.driver
+}
+
+type DB struct {
+	conn   *sql.DB
+	driver string
+}
+
+// New opens a SQLite file. Tests and the default server use this.
 func New(dbPath string) (*DB, error) {
+	return openSQLite(dbPath)
+}
+
+// Open selects sqlite or postgres from config.
+func Open(cfg *config.Config) (*DB, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	switch cfg.Database.Driver {
+	case "", "sqlite":
+		if cfg.Database.Path == "" {
+			return nil, fmt.Errorf("database.path is required for sqlite")
+		}
+		return openSQLite(cfg.Database.Path)
+	case "postgres":
+		if cfg.Database.DSN == "" {
+			return nil, fmt.Errorf("database.dsn is required for postgres")
+		}
+		return openPostgres(cfg.Database.DSN)
+	default:
+		return nil, fmt.Errorf("database.driver must be sqlite or postgres")
+	}
+}
+
+func openSQLite(dbPath string) (*DB, error) {
 	conn, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -23,16 +70,45 @@ func New(dbPath string) (*DB, error) {
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
 
-	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	db := &DB{conn: conn, driver: "sqlite"}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
 	}
-
-	if _, err := conn.Exec("PRAGMA foreign_keys=ON"); err != nil {
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
-
-	db := &DB{conn: conn}
 	return db, nil
+}
+
+func openPostgres(dsn string) (*DB, error) {
+	conn, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(30 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := conn.PingContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("postgres: %w", err)
+	}
+	return &DB{conn: conn, driver: "postgres"}, nil
+}
+
+func (db *DB) Exec(query string, args ...any) (sql.Result, error) {
+	return db.conn.Exec(db.prepare(query), args...)
+}
+
+func (db *DB) Query(query string, args ...any) (*sql.Rows, error) {
+	return db.conn.Query(db.prepare(query), args...)
+}
+
+func (db *DB) QueryRow(query string, args ...any) *sql.Row {
+	return db.conn.QueryRow(db.prepare(query), args...)
 }
 
 func (db *DB) Close() error {
@@ -282,7 +358,7 @@ func (db *DB) Migrate() error {
 	}
 
 	for _, migration := range migrations {
-		if _, err := db.conn.Exec(migration); err != nil {
+		if _, err := db.Exec(migration); err != nil {
 			return fmt.Errorf("failed to execute migration: %w", err)
 		}
 	}
@@ -319,15 +395,51 @@ func (db *DB) Migrate() error {
 		`ALTER TABLE ciba_requests ADD COLUMN scopes TEXT`,
 	}
 	for _, alter := range alters {
-		_, _ = db.conn.Exec(alter)
+		if _, err := db.Exec(alter); err != nil && db.driver == "postgres" && !isDuplicateColumn(err) {
+			return fmt.Errorf("failed to execute migration: %w", err)
+		}
 	}
 
-	if _, err := db.conn.Exec(`INSERT INTO schema_flags (name) VALUES ('email_verified_backfill')`); err == nil {
-		_, _ = db.conn.Exec(`UPDATE users SET email_verified = 1 WHERE email IS NOT NULL AND email != ''`)
+	if _, err := db.Exec(`INSERT INTO schema_flags (name) VALUES ('email_verified_backfill')`); err == nil {
+		_, _ = db.Exec(`UPDATE users SET email_verified = 1 WHERE email IS NOT NULL AND email != ''`)
 	}
-	_, _ = db.conn.Exec(`UPDATE refresh_tokens SET id = lower(hex(randomblob(16))) WHERE id IS NULL OR id = ''`)
-	_, _ = db.conn.Exec(`UPDATE refresh_tokens SET family_id = lower(hex(randomblob(16))) WHERE family_id IS NULL OR family_id = ''`)
+	if err := db.backfillRefreshIDs(); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func isDuplicateColumn(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42701"
+}
+
+func (db *DB) backfillRefreshIDs() error {
+	rows, err := db.Query(`SELECT token FROM refresh_tokens WHERE id IS NULL OR id = '' OR family_id IS NULL OR family_id = ''`)
+	if err != nil {
+		return fmt.Errorf("refresh token ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return err
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, token := range tokens {
+		if _, err := db.Exec(`UPDATE refresh_tokens SET
+			id = CASE WHEN id IS NULL OR id = '' THEN ? ELSE id END,
+			family_id = CASE WHEN family_id IS NULL OR family_id = '' THEN ? ELSE family_id END
+			WHERE token = ?`, newID(), newID(), token); err != nil {
+			return fmt.Errorf("refresh token ids: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -343,7 +455,7 @@ func (db *DB) CreateClient(client *models.Client) error {
 		created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		client.ID, client.Secret, client.Name,
 		string(redirectURIs), string(grantTypes), string(scopes),
 		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
@@ -365,7 +477,7 @@ func (db *DB) GetClient(id string) (*models.Client, error) {
 	client := &models.Client{}
 	var redirectURIs, grantTypes, scopes string
 
-	err := db.conn.QueryRow(query, id).Scan(
+	err := db.QueryRow(query, id).Scan(
 		&client.ID, &client.Secret, &client.Name,
 		&redirectURIs, &grantTypes, &scopes,
 		&client.TokenEndpointAuthMethod, &client.DPoPBoundAccessTokens,
@@ -398,7 +510,7 @@ func (db *DB) ListClients() ([]*models.Client, error) {
 		created_at, updated_at
 		FROM clients ORDER BY created_at DESC`
 
-	rows, err := db.conn.Query(query)
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +560,7 @@ func (db *DB) UpdateClient(client *models.Client) error {
 		updated_at=?
 		WHERE id=?`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		client.Name, string(redirectURIs), string(grantTypes), string(scopes),
 		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
 		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
@@ -459,7 +571,7 @@ func (db *DB) UpdateClient(client *models.Client) error {
 }
 
 func (db *DB) DeleteClient(id string) error {
-	_, err := db.conn.Exec("DELETE FROM clients WHERE id = ?", id)
+	_, err := db.Exec("DELETE FROM clients WHERE id = ?", id)
 	return err
 }
 
@@ -480,7 +592,7 @@ func (db *DB) CreateUser(user *models.User) error {
 		email_verified, disabled, given_name, family_name)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		user.ID, user.Username, user.PasswordHash,
 		user.Email, user.PhoneNumber, user.CreatedAt,
 		user.EmailVerified, user.Disabled, user.GivenName, user.FamilyName,
@@ -497,7 +609,7 @@ func (db *DB) GetUser(id string) (*models.User, error) {
 	var lastLogin sql.NullTime
 	var emailVerified, disabled int
 	var attrs string
-	err := db.conn.QueryRow(query, id).Scan(
+	err := db.QueryRow(query, id).Scan(
 		&user.ID, &user.Username, &user.PasswordHash,
 		&user.Email, &user.PhoneNumber, &user.CreatedAt,
 		&lastLogin, &emailVerified, &disabled, &user.GivenName, &user.FamilyName, &attrs,
@@ -524,7 +636,7 @@ func (db *DB) GetUserByUsername(username string) (*models.User, error) {
 	var lastLogin sql.NullTime
 	var emailVerified, disabled int
 	var attrs string
-	err := db.conn.QueryRow(query, username).Scan(
+	err := db.QueryRow(query, username).Scan(
 		&user.ID, &user.Username, &user.PasswordHash,
 		&user.Email, &user.PhoneNumber, &user.CreatedAt,
 		&lastLogin, &emailVerified, &disabled, &user.GivenName, &user.FamilyName, &attrs,
@@ -547,7 +659,7 @@ func (db *DB) ListUsers() ([]*models.User, error) {
 		last_login_at, COALESCE(email_verified, 0), COALESCE(disabled, 0), COALESCE(given_name, ''), COALESCE(family_name, ''), COALESCE(attributes, '{}')
 		FROM users ORDER BY created_at DESC`
 
-	rows, err := db.conn.Query(query)
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +697,7 @@ func (db *DB) SaveAuthorizationCode(code *models.AuthorizationCode) error {
 		code_challenge, code_challenge_method, expires_at, used)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		code.Code, code.ClientID, code.UserID, code.RedirectURI,
 		string(scopes), code.CodeChallenge, code.CodeChallengeMethod,
 		code.ExpiresAt, code.Used,
@@ -601,7 +713,7 @@ func (db *DB) GetAuthorizationCode(code string) (*models.AuthorizationCode, erro
 	ac := &models.AuthorizationCode{}
 	var scopes string
 
-	err := db.conn.QueryRow(query, code).Scan(
+	err := db.QueryRow(query, code).Scan(
 		&ac.Code, &ac.ClientID, &ac.UserID, &ac.RedirectURI,
 		&scopes, &ac.CodeChallenge, &ac.CodeChallengeMethod,
 		&ac.ExpiresAt, &ac.Used,
@@ -617,7 +729,7 @@ func (db *DB) GetAuthorizationCode(code string) (*models.AuthorizationCode, erro
 }
 
 func (db *DB) UseAuthorizationCode(code string) error {
-	_, err := db.conn.Exec("UPDATE authorization_codes SET used = 1 WHERE code = ?", code)
+	_, err := db.Exec("UPDATE authorization_codes SET used = 1 WHERE code = ?", code)
 	return err
 }
 
@@ -626,7 +738,7 @@ func (db *DB) SaveAccessToken(token *models.AccessToken) error {
 	query := `INSERT INTO access_tokens (token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		token.Token, token.ClientID, token.UserID,
 		string(scopes), token.TokenType, token.DPoPJKT,
 		token.ExpiresAt, token.Revoked,
@@ -641,7 +753,7 @@ func (db *DB) GetAccessToken(token string) (*models.AccessToken, error) {
 	at := &models.AccessToken{}
 	var scopes string
 
-	err := db.conn.QueryRow(query, token).Scan(
+	err := db.QueryRow(query, token).Scan(
 		&at.Token, &at.ClientID, &at.UserID,
 		&scopes, &at.TokenType, &at.DPoPJKT,
 		&at.ExpiresAt, &at.Revoked,
@@ -657,7 +769,7 @@ func (db *DB) GetAccessToken(token string) (*models.AccessToken, error) {
 }
 
 func (db *DB) RevokeAccessToken(token string) error {
-	_, err := db.conn.Exec("UPDATE access_tokens SET revoked = 1 WHERE token = ?", token)
+	_, err := db.Exec("UPDATE access_tokens SET revoked = 1 WHERE token = ?", token)
 	return err
 }
 
@@ -666,7 +778,7 @@ func (db *DB) SaveRefreshToken(token *models.RefreshToken) error {
 	query := `INSERT INTO refresh_tokens (token, access_token, client_id, user_id, scopes, expires_at, revoked)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		token.Token, token.AccessToken, token.ClientID,
 		token.UserID, string(scopes), token.ExpiresAt, token.Revoked,
 	)
@@ -680,7 +792,7 @@ func (db *DB) GetRefreshToken(token string) (*models.RefreshToken, error) {
 	rt := &models.RefreshToken{}
 	var scopes string
 
-	err := db.conn.QueryRow(query, token).Scan(
+	err := db.QueryRow(query, token).Scan(
 		&rt.Token, &rt.AccessToken, &rt.ClientID,
 		&rt.UserID, &scopes, &rt.ExpiresAt, &rt.Revoked,
 	)
@@ -695,7 +807,7 @@ func (db *DB) GetRefreshToken(token string) (*models.RefreshToken, error) {
 }
 
 func (db *DB) RevokeRefreshToken(token string) error {
-	_, err := db.conn.Exec("UPDATE refresh_tokens SET revoked = 1 WHERE token = ?", token)
+	_, err := db.Exec("UPDATE refresh_tokens SET revoked = 1 WHERE token = ?", token)
 	return err
 }
 
@@ -704,7 +816,7 @@ func (db *DB) SaveDeviceCode(dc *models.DeviceCode) error {
 	query := `INSERT INTO device_codes (device_code, user_code, client_id, scopes, status, expires_at, interval)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		dc.DeviceCode, dc.UserCode, dc.ClientID,
 		string(scopes), dc.Status, dc.ExpiresAt, dc.Interval,
 	)
@@ -718,7 +830,7 @@ func (db *DB) GetDeviceCode(deviceCode string) (*models.DeviceCode, error) {
 	dc := &models.DeviceCode{}
 	var scopes string
 
-	err := db.conn.QueryRow(query, deviceCode).Scan(
+	err := db.QueryRow(query, deviceCode).Scan(
 		&dc.DeviceCode, &dc.UserCode, &dc.ClientID,
 		&scopes, &dc.Status, &dc.ExpiresAt, &dc.Interval,
 	)
@@ -739,7 +851,7 @@ func (db *DB) GetDeviceCodeByUserCode(userCode string) (*models.DeviceCode, erro
 	dc := &models.DeviceCode{}
 	var scopes string
 
-	err := db.conn.QueryRow(query, userCode).Scan(
+	err := db.QueryRow(query, userCode).Scan(
 		&dc.DeviceCode, &dc.UserCode, &dc.ClientID,
 		&scopes, &dc.Status, &dc.ExpiresAt, &dc.Interval,
 	)
@@ -754,7 +866,7 @@ func (db *DB) GetDeviceCodeByUserCode(userCode string) (*models.DeviceCode, erro
 }
 
 func (db *DB) UpdateDeviceCodeStatus(deviceCode, status string) error {
-	_, err := db.conn.Exec("UPDATE device_codes SET status = ? WHERE device_code = ?", status, deviceCode)
+	_, err := db.Exec("UPDATE device_codes SET status = ? WHERE device_code = ?", status, deviceCode)
 	return err
 }
 
@@ -762,7 +874,7 @@ func (db *DB) SavePushedAuthRequest(par *models.PushedAuthRequest) error {
 	query := `INSERT INTO pushed_auth_requests (request_uri, client_id, request_params, expires_at)
 		VALUES (?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		par.RequestURI, par.ClientID, par.RequestParams, par.ExpiresAt,
 	)
 	return err
@@ -773,7 +885,7 @@ func (db *DB) GetPushedAuthRequest(requestURI string) (*models.PushedAuthRequest
 		FROM pushed_auth_requests WHERE request_uri = ?`
 
 	par := &models.PushedAuthRequest{}
-	err := db.conn.QueryRow(query, requestURI).Scan(
+	err := db.QueryRow(query, requestURI).Scan(
 		&par.RequestURI, &par.ClientID, &par.RequestParams, &par.ExpiresAt,
 	)
 	return par, err
@@ -784,7 +896,7 @@ func (db *DB) SaveCIBARequest(req *models.CIBARequest) error {
 		status, delivery_mode, expires_at, interval, client_notification_token)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		req.AuthReqID, req.ClientID, req.UserID, req.BindingMessage,
 		req.UserCode, req.Status, req.DeliveryMode, req.ExpiresAt,
 		req.Interval, req.ClientNotificationToken,
@@ -798,7 +910,7 @@ func (db *DB) GetCIBARequest(authReqID string) (*models.CIBARequest, error) {
 		FROM ciba_requests WHERE auth_req_id = ?`
 
 	req := &models.CIBARequest{}
-	err := db.conn.QueryRow(query, authReqID).Scan(
+	err := db.QueryRow(query, authReqID).Scan(
 		&req.AuthReqID, &req.ClientID, &req.UserID, &req.BindingMessage,
 		&req.UserCode, &req.Status, &req.DeliveryMode, &req.ExpiresAt,
 		&req.Interval, &req.ClientNotificationToken,
@@ -807,7 +919,7 @@ func (db *DB) GetCIBARequest(authReqID string) (*models.CIBARequest, error) {
 }
 
 func (db *DB) UpdateCIBARequestStatus(authReqID, status string) error {
-	_, err := db.conn.Exec("UPDATE ciba_requests SET status = ? WHERE auth_req_id = ?", status, authReqID)
+	_, err := db.Exec("UPDATE ciba_requests SET status = ? WHERE auth_req_id = ?", status, authReqID)
 	return err
 }
 
@@ -817,7 +929,7 @@ func (db *DB) GetPendingCIBARequests() ([]*models.CIBARequest, error) {
 		FROM ciba_requests WHERE status = 'pending' AND expires_at > ?
 		ORDER BY expires_at DESC`
 
-	rows, err := db.conn.Query(query, time.Now())
+	rows, err := db.Query(query, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -843,7 +955,7 @@ func (db *DB) SaveDPoPProof(proof *models.DPoPProof) error {
 	query := `INSERT INTO dpop_proofs (jti, htm, htu, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?)`
 
-	_, err := db.conn.Exec(query,
+	_, err := db.Exec(query,
 		proof.JTI, proof.HTM, proof.HTU, proof.CreatedAt, proof.ExpiresAt,
 	)
 	return err
@@ -854,7 +966,7 @@ func (db *DB) GetDPoPProof(jti string) (*models.DPoPProof, error) {
 		FROM dpop_proofs WHERE jti = ?`
 
 	proof := &models.DPoPProof{}
-	err := db.conn.QueryRow(query, jti).Scan(
+	err := db.QueryRow(query, jti).Scan(
 		&proof.JTI, &proof.HTM, &proof.HTU, &proof.CreatedAt, &proof.ExpiresAt,
 	)
 	return proof, err
@@ -863,7 +975,7 @@ func (db *DB) GetDPoPProof(jti string) (*models.DPoPProof, error) {
 func (db *DB) SaveOIDCNonce(nonce *models.OIDCNonce) error {
 	query := `INSERT INTO oidc_nonces (nonce, client_id, expires_at) VALUES (?, ?, ?)`
 
-	_, err := db.conn.Exec(query, nonce.Nonce, nonce.ClientID, nonce.ExpiresAt)
+	_, err := db.Exec(query, nonce.Nonce, nonce.ClientID, nonce.ExpiresAt)
 	return err
 }
 
@@ -871,7 +983,7 @@ func (db *DB) GetOIDCNonce(nonce string) (*models.OIDCNonce, error) {
 	query := `SELECT nonce, client_id, expires_at FROM oidc_nonces WHERE nonce = ?`
 
 	n := &models.OIDCNonce{}
-	err := db.conn.QueryRow(query, nonce).Scan(&n.Nonce, &n.ClientID, &n.ExpiresAt)
+	err := db.QueryRow(query, nonce).Scan(&n.Nonce, &n.ClientID, &n.ExpiresAt)
 	return n, err
 }
 
@@ -890,7 +1002,7 @@ func (db *DB) ListAccessTokens(clientID, userID string) ([]*models.AccessToken, 
 	}
 	query += " ORDER BY expires_at DESC"
 
-	rows, err := db.conn.Query(query, args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -934,7 +1046,7 @@ func (db *DB) CleanupExpired() error {
 
 	for _, t := range tables {
 		query := fmt.Sprintf("DELETE FROM %s WHERE %s < ?", t.table, t.timeCol)
-		if _, err := db.conn.Exec(query, now); err != nil {
+		if _, err := db.Exec(query, now); err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", t.table, err)
 		}
 	}
