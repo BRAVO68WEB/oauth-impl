@@ -37,7 +37,8 @@
           {"context": "Lint", "integration_id": 15368},
           {"context": "Vet", "integration_id": 15368},
           {"context": "Format", "integration_id": 15368},
-          {"context": "Tidy", "integration_id": 15368}
+          {"context": "Tidy", "integration_id": 15368},
+          {"context": "Test Postgres", "integration_id": 15368}
         ]
       }
     }
