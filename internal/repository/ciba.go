@@ -26,8 +26,12 @@ func (r *CIBARepository) Save(req *models.CIBARequest) error {
 		status, delivery_mode, expires_at, interval, client_notification_token, scopes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+	var userID any
+	if req.UserID != "" {
+		userID = req.UserID
+	}
 	_, err = r.db.Exec(query,
-		req.AuthReqID, req.ClientID, req.UserID, req.BindingMessage,
+		req.AuthReqID, req.ClientID, userID, req.BindingMessage,
 		req.UserCode, req.Status, req.DeliveryMode, req.ExpiresAt,
 		req.Interval, req.ClientNotificationToken, string(scopesJSON),
 	)

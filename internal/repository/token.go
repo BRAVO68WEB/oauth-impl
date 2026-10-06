@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"github.com/google/uuid"
+
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
@@ -56,36 +58,50 @@ func (r *TokenRepository) RevokeAccessToken(token string) error {
 }
 
 func (r *TokenRepository) SaveRefreshToken(token *models.RefreshToken) error {
+	if token.ID == "" {
+		token.ID = uuid.NewString()
+	}
+	if token.FamilyID == "" {
+		token.FamilyID = uuid.NewString()
+	}
 	scopes, _ := json.Marshal(token.Scopes)
-	query := `INSERT INTO refresh_tokens (token, access_token, client_id, user_id, scopes, expires_at, revoked)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO refresh_tokens (id, token, access_token, client_id, user_id, scopes, family_id, expires_at, revoked)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
-		token.Token, token.AccessToken, token.ClientID,
-		token.UserID, string(scopes), token.ExpiresAt, token.Revoked,
+		token.ID, token.Token, token.AccessToken, token.ClientID,
+		token.UserID, string(scopes), token.FamilyID, token.ExpiresAt, token.Revoked,
 	)
 	return err
 }
 
-func (r *TokenRepository) GetRefreshToken(token string) (*models.RefreshToken, error) {
-	query := `SELECT token, access_token, client_id, user_id, scopes, expires_at, revoked
-		FROM refresh_tokens WHERE token = ?`
-
+func scanRefresh(scan func(dest ...any) error) (*models.RefreshToken, error) {
 	rt := &models.RefreshToken{}
 	var scopes string
-
-	err := r.db.QueryRow(query, token).Scan(
-		&rt.Token, &rt.AccessToken, &rt.ClientID,
-		&rt.UserID, &scopes, &rt.ExpiresAt, &rt.Revoked,
-	)
-	if err != nil {
+	var id, family, userID sql.NullString
+	if err := scan(
+		&id, &rt.Token, &rt.AccessToken, &rt.ClientID,
+		&userID, &scopes, &family, &rt.ExpiresAt, &rt.Revoked,
+	); err != nil {
 		return nil, err
 	}
-
+	rt.ID = id.String
+	rt.FamilyID = family.String
+	rt.UserID = userID.String
 	if err := json.Unmarshal([]byte(scopes), &rt.Scopes); err != nil {
 		return nil, err
 	}
 	return rt, nil
+}
+
+const refreshColumns = `COALESCE(id, ''), token, COALESCE(access_token, ''), client_id, user_id, scopes, COALESCE(family_id, ''), expires_at, revoked`
+
+func (r *TokenRepository) GetRefreshToken(token string) (*models.RefreshToken, error) {
+	return scanRefresh(r.db.QueryRow(`SELECT `+refreshColumns+` FROM refresh_tokens WHERE token = ?`, token).Scan)
+}
+
+func (r *TokenRepository) GetRefreshByID(id string) (*models.RefreshToken, error) {
+	return scanRefresh(r.db.QueryRow(`SELECT `+refreshColumns+` FROM refresh_tokens WHERE id = ?`, id).Scan)
 }
 
 func (r *TokenRepository) RevokeRefreshToken(token string) error {
@@ -94,24 +110,115 @@ func (r *TokenRepository) RevokeRefreshToken(token string) error {
 }
 
 func (r *TokenRepository) GetRefreshTokenByAccessToken(accessToken string) (*models.RefreshToken, error) {
-	query := `SELECT token, access_token, client_id, user_id, scopes, expires_at, revoked
-		FROM refresh_tokens WHERE access_token = ?`
+	return scanRefresh(r.db.QueryRow(`SELECT `+refreshColumns+` FROM refresh_tokens WHERE access_token = ?`, accessToken).Scan)
+}
 
-	rt := &models.RefreshToken{}
-	var scopes string
+func (r *TokenRepository) RevokeFamily(familyID string) error {
+	if familyID == "" {
+		return nil
+	}
+	rows, err := r.db.Query(`SELECT access_token FROM refresh_tokens WHERE family_id = ? AND access_token IS NOT NULL AND access_token != ''`, familyID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	var access []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return err
+		}
+		access = append(access, token)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, token := range access {
+		if _, err := r.db.Exec(`UPDATE access_tokens SET revoked = 1 WHERE token = ?`, token); err != nil {
+			return err
+		}
+	}
+	_, err = r.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE family_id = ?`, familyID)
+	return err
+}
 
-	err := r.db.QueryRow(query, accessToken).Scan(
-		&rt.Token, &rt.AccessToken, &rt.ClientID,
-		&rt.UserID, &scopes, &rt.ExpiresAt, &rt.Revoked,
-	)
+func (r *TokenRepository) ListRefreshTokens(clientID, userID string) ([]*models.RefreshToken, error) {
+	query := `SELECT ` + refreshColumns + ` FROM refresh_tokens WHERE 1=1`
+	args := []any{}
+	if clientID != "" {
+		query += ` AND client_id = ?`
+		args = append(args, clientID)
+	}
+	if userID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY expires_at DESC`
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
-
-	if err := json.Unmarshal([]byte(scopes), &rt.Scopes); err != nil {
-		return nil, err
+	defer func() { _ = rows.Close() }()
+	out := make([]*models.RefreshToken, 0)
+	for rows.Next() {
+		rt, err := scanRefresh(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		rt.Token = ""
+		rt.AccessToken = ""
+		out = append(out, rt)
 	}
-	return rt, nil
+	return out, rows.Err()
+}
+
+func (r *TokenRepository) RevokeAllForUser(userID string) error {
+	_, _ = r.db.Exec(`UPDATE access_tokens SET revoked = 1 WHERE user_id = ?`, userID)
+	_, err := r.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?`, userID)
+	return err
+}
+
+func (r *TokenRepository) RevokeOtherFamilies(userID, keepAccessToken string) error {
+	keepFamily := ""
+	if keepAccessToken != "" {
+		if rt, err := r.GetRefreshTokenByAccessToken(keepAccessToken); err == nil {
+			keepFamily = rt.FamilyID
+		}
+	}
+	rows, err := r.db.Query(`SELECT COALESCE(family_id, ''), COALESCE(access_token, '') FROM refresh_tokens WHERE user_id = ? AND revoked = 0`, userID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	type pair struct{ family, access string }
+	var pairs []pair
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.family, &p.access); err != nil {
+			return err
+		}
+		pairs = append(pairs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range pairs {
+		if keepFamily != "" && p.family == keepFamily {
+			continue
+		}
+		if p.access != "" && p.access != keepAccessToken {
+			_, _ = r.db.Exec(`UPDATE access_tokens SET revoked = 1 WHERE token = ?`, p.access)
+		}
+		if p.family != "" {
+			_, _ = r.db.Exec(`UPDATE refresh_tokens SET revoked = 1 WHERE family_id = ?`, p.family)
+		}
+	}
+	if keepAccessToken != "" {
+		_, err = r.db.Exec(`UPDATE access_tokens SET revoked = 1 WHERE user_id = ? AND token != ?`, userID, keepAccessToken)
+	} else {
+		_, err = r.db.Exec(`UPDATE access_tokens SET revoked = 1 WHERE user_id = ?`, userID)
+	}
+	return err
 }
 
 func (r *TokenRepository) RevokeAllForClient(clientID, userID string) error {

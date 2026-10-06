@@ -14,7 +14,6 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"strings"
 	"text/tabwriter"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -33,6 +32,9 @@ func main() {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "http://127.0.0.1:8080", "OAuth server URL")
+	rootCmd.PersistentFlags().StringVar(&mgmtClientID, "client-id", "", "Management client ID")
+	rootCmd.PersistentFlags().StringVar(&mgmtClientSecret, "client-secret", "", "Management client secret")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Config file used for management credentials")
 
 	rootCmd.AddCommand(
 		initCmd(),
@@ -46,6 +48,9 @@ func main() {
 		scopeCmd(),
 		resourceCmd(),
 		consentCmd(),
+		webhookCmd(),
+		analyticsCmd(),
+		auditCmd(),
 		keysCmd(),
 	)
 
@@ -120,7 +125,7 @@ func clientCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all clients",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/api/clients")
+			resp, err := apiGet(serverURL + "/api/clients")
 			if err != nil {
 				return err
 			}
@@ -155,15 +160,19 @@ func clientCmd() *cobra.Command {
 				return fmt.Errorf("name is required")
 			}
 
+			dcrEnabled, _ := cmd.Flags().GetBool("dcr-enabled")
+			cimdEnabled, _ := cmd.Flags().GetBool("cimd-enabled")
 			body := map[string]interface{}{
 				"name":          name,
 				"redirect_uris": redirectURIs,
 				"grant_types":   grantTypes,
 				"scopes":        scopes,
+				"dcr_enabled":   dcrEnabled,
+				"cimd_enabled":  cimdEnabled,
 			}
 
 			jsonBody, _ := json.Marshal(body)
-			resp, err := http.Post(serverURL+"/api/clients", "application/json", bytes.NewBuffer(jsonBody))
+			resp, err := apiPost(serverURL+"/api/clients", "application/json", bytes.NewBuffer(jsonBody))
 			if err != nil {
 				return err
 			}
@@ -193,13 +202,64 @@ func clientCmd() *cobra.Command {
 	createCmd.Flags().StringSliceP("redirect-uri", "r", []string{}, "Redirect URIs")
 	createCmd.Flags().StringSliceP("grant-type", "g", []string{"authorization_code"}, "Grant types")
 	createCmd.Flags().StringSliceP("scope", "s", []string{"openid"}, "Scopes")
+	createCmd.Flags().Bool("dcr-enabled", false, "Allow this app when tenant dynamic registration is on")
+	createCmd.Flags().Bool("cimd-enabled", false, "Allow this app when tenant client metadata documents are on")
+
+	updateCmd := &cobra.Command{
+		Use:   "update [client-id]",
+		Short: "Update per-app DCR, CIMD, or forced DPoP flags",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := apiGet(serverURL + "/api/clients/" + args[0])
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var client map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&client); err != nil {
+				return err
+			}
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("failed to load client: %v", client["error_description"])
+			}
+			if cmd.Flags().Changed("dcr-enabled") {
+				v, _ := cmd.Flags().GetBool("dcr-enabled")
+				client["dcr_enabled"] = v
+			}
+			if cmd.Flags().Changed("cimd-enabled") {
+				v, _ := cmd.Flags().GetBool("cimd-enabled")
+				client["cimd_enabled"] = v
+			}
+			if cmd.Flags().Changed("dpop") {
+				v, _ := cmd.Flags().GetBool("dpop")
+				client["dpop_bound_access_tokens"] = v
+			}
+			delete(client, "secret")
+			body, _ := json.Marshal(client)
+			put, err := apiPut(serverURL+"/api/clients/"+args[0], "application/json", bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = put.Body.Close() }()
+			if put.StatusCode != http.StatusOK {
+				var result map[string]any
+				_ = json.NewDecoder(put.Body).Decode(&result)
+				return fmt.Errorf("failed to update client: %v", result["error_description"])
+			}
+			fmt.Printf("Client %s updated\n", args[0])
+			return nil
+		},
+	}
+	updateCmd.Flags().Bool("dcr-enabled", false, "Allow this app when tenant dynamic registration is on")
+	updateCmd.Flags().Bool("cimd-enabled", false, "Allow this app when tenant client metadata documents are on")
+	updateCmd.Flags().Bool("dpop", false, "Require DPoP for every token from this app")
 
 	getCmd := &cobra.Command{
 		Use:   "get [client-id]",
 		Short: "Get client details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/api/clients/" + args[0])
+			resp, err := apiGet(serverURL + "/api/clients/" + args[0])
 			if err != nil {
 				return err
 			}
@@ -229,7 +289,7 @@ func clientCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := withManagement(req)
 			if err != nil {
 				return err
 			}
@@ -271,7 +331,7 @@ func clientCmd() *cobra.Command {
 			}
 
 			jsonBody, _ := json.Marshal(body)
-			resp, err := http.Post(serverURL+"/api/clients", "application/json", bytes.NewBuffer(jsonBody))
+			resp, err := apiPost(serverURL+"/api/clients", "application/json", bytes.NewBuffer(jsonBody))
 			if err != nil {
 				return err
 			}
@@ -312,7 +372,7 @@ func clientCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(listCmd, createCmd, getCmd, deleteCmd, masterCmd)
+	cmd.AddCommand(listCmd, createCmd, getCmd, updateCmd, deleteCmd, masterCmd)
 	return cmd
 }
 
@@ -326,7 +386,7 @@ func userCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all users",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/api/users")
+			resp, err := apiGet(serverURL + "/api/users")
 			if err != nil {
 				return err
 			}
@@ -367,7 +427,7 @@ func userCmd() *cobra.Command {
 			}
 
 			jsonBody, _ := json.Marshal(body)
-			resp, err := http.Post(serverURL+"/api/users", "application/json", bytes.NewBuffer(jsonBody))
+			resp, err := apiPost(serverURL+"/api/users", "application/json", bytes.NewBuffer(jsonBody))
 			if err != nil {
 				return err
 			}
@@ -402,7 +462,7 @@ func userCmd() *cobra.Command {
 		Short: "Get user details",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/api/users/" + args[0])
+			resp, err := apiGet(serverURL + "/api/users/" + args[0])
 			if err != nil {
 				return err
 			}
@@ -422,8 +482,68 @@ func userCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(listCmd, createCmd, getCmd)
+	passwordCmd := &cobra.Command{
+		Use:   "password [user-id]",
+		Short: "Set a user's password",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			password, _ := cmd.Flags().GetString("password")
+			if password == "" {
+				return fmt.Errorf("password is required")
+			}
+			body, _ := json.Marshal(map[string]string{"password": password})
+			resp, err := apiPost(serverURL+"/api/users/"+args[0]+"/password", "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("set password failed: %s", resp.Status)
+			}
+			fmt.Println("Password updated")
+			return nil
+		},
+	}
+	passwordCmd.Flags().StringP("password", "p", "", "New password")
+
+	disableCmd := &cobra.Command{
+		Use:   "disable [user-id]",
+		Short: "Disable a user",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, args []string) error { return patchUserDisabled(args[0], true) },
+	}
+	enableCmd := &cobra.Command{
+		Use:   "enable [user-id]",
+		Short: "Enable a user",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, args []string) error { return patchUserDisabled(args[0], false) },
+	}
+
+	cmd.AddCommand(listCmd, createCmd, getCmd, passwordCmd, disableCmd, enableCmd)
 	return cmd
+}
+
+func patchUserDisabled(userID string, disabled bool) error {
+	body, _ := json.Marshal(map[string]bool{"disabled": disabled})
+	req, err := http.NewRequest(http.MethodPatch, serverURL+"/api/users/"+userID, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := withManagement(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update user failed: %s", resp.Status)
+	}
+	if disabled {
+		fmt.Println("User disabled")
+	} else {
+		fmt.Println("User enabled")
+	}
+	return nil
 }
 
 func tokenCmd() *cobra.Command {
@@ -447,7 +567,7 @@ func tokenCmd() *cobra.Command {
 				url += "user_id=" + userID
 			}
 
-			resp, err := http.Get(url)
+			resp, err := apiGet(url)
 			if err != nil {
 				return err
 			}
@@ -475,6 +595,62 @@ func tokenCmd() *cobra.Command {
 
 	listCmd.Flags().String("client-id", "", "Filter by client ID")
 	listCmd.Flags().String("user-id", "", "Filter by user ID")
+
+	refreshCmd := &cobra.Command{
+		Use:   "refresh",
+		Short: "Refresh token management",
+	}
+	refreshList := &cobra.Command{
+		Use:   "list",
+		Short: "List refresh tokens",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientID, _ := cmd.Flags().GetString("client-id")
+			userID, _ := cmd.Flags().GetString("user-id")
+			path := serverURL + "/api/refresh-tokens?"
+			if clientID != "" {
+				path += "client_id=" + clientID + "&"
+			}
+			if userID != "" {
+				path += "user_id=" + userID
+			}
+			resp, err := apiGet(path)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var tokens []map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintf(w, "ID\tCLIENT ID\tUSER ID\tFAMILY\tEXPIRES\n")
+			for _, t := range tokens {
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t["id"], t["client_id"], t["user_id"], t["family_id"], t["expires_at"])
+			}
+			_ = w.Flush()
+			return nil
+		},
+	}
+	refreshList.Flags().String("client-id", "", "Filter by client ID")
+	refreshList.Flags().String("user-id", "", "Filter by user ID")
+	refreshRevoke := &cobra.Command{
+		Use:   "revoke [id]",
+		Short: "Revoke a refresh token by public id",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := apiPost(serverURL+"/api/refresh-tokens/"+args[0]+"/revoke", "", nil)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("revoke failed: %s", resp.Status)
+			}
+			fmt.Println("Refresh token revoked")
+			return nil
+		},
+	}
+	refreshCmd.AddCommand(refreshList, refreshRevoke)
 
 	introspectCmd := &cobra.Command{
 		Use:   "introspect [token]",
@@ -514,7 +690,7 @@ func tokenCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := withManagement(req)
 			if err != nil {
 				return err
 			}
@@ -525,7 +701,7 @@ func tokenCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(listCmd, introspectCmd, revokeCmd)
+	cmd.AddCommand(listCmd, introspectCmd, revokeCmd, refreshCmd)
 	return cmd
 }
 
@@ -539,7 +715,7 @@ func cibaCmd() *cobra.Command {
 		Use:   "pending",
 		Short: "List pending CIBA requests",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/ciba/pending")
+			resp, err := apiGet(serverURL + "/ciba/pending")
 			if err != nil {
 				return err
 			}
@@ -577,7 +753,7 @@ func cibaCmd() *cobra.Command {
 				url += "&user_id=" + userID
 			}
 
-			resp, err := http.Post(url, "", nil)
+			resp, err := apiPost(url, "", nil)
 			if err != nil {
 				return err
 			}
@@ -607,7 +783,7 @@ func cibaCmd() *cobra.Command {
 				url += "&reason=" + reason
 			}
 
-			resp, err := http.Post(url, "", nil)
+			resp, err := apiPost(url, "", nil)
 			if err != nil {
 				return err
 			}
@@ -730,103 +906,6 @@ func flowCmd() *cobra.Command {
 	return cmd
 }
 
-func initCmd() *cobra.Command {
-	var outputPath string
-	var withMFA bool
-
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize server configuration file",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := `# OAuth Implementation Server Configuration
-server:
-  host: "0.0.0.0"
-  port: 8080
-  tls:
-    enabled: false
-    cert_file: ""
-    key_file: ""
-
-database:
-  path: "./oauth.db"
-  migrations: true
-
-security:
-  access_token_lifetime: 3600s
-  refresh_token_lifetime: 86400s
-  authorization_code_lifetime: 600s
-  device_code_lifetime: 1800s
-  ciba_request_lifetime: 120s
-  request_uri_lifetime: 60s
-  require_pkce: true
-  allow_plain_pkce: false
-  issuer: "http://localhost:8080"
-  mfa:
-    enabled: false
-    required: false
-    issuer: "OAuthImplServer"
-    digits: 6
-    period: 30
-
-queue:
-  type: "memory"
-  poll_interval: 5s
-  max_pending: 100
-
-oidc:
-  issuer: "http://localhost:8080"
-  supported_scopes:
-    - openid
-    - profile
-    - email
-    - address
-    - phone
-    - offline_access
-  supported_claims:
-    - sub
-    - name
-    - given_name
-    - family_name
-    - email
-    - email_verified
-    - preferred_username
-  supported_grant_types:
-    - authorization_code
-    - client_credentials
-    - refresh_token
-    - urn:ietf:params:oauth:grant-type:device_code
-    - urn:openid:params:grant-type:ciba
-  supported_auth_methods:
-    - client_secret_basic
-    - client_secret_post
-    - client_secret_jwt
-    - private_key_jwt
-    - none
-`
-			if withMFA {
-				cfg = strings.Replace(cfg, "enabled: false", "enabled: true", 1)
-				cfg = strings.Replace(cfg, "required: false", "required: true", 1)
-			}
-
-			if outputPath == "" {
-				outputPath = "config.yaml"
-			}
-
-			if err := os.WriteFile(outputPath, []byte(cfg), 0644); err != nil {
-				return fmt.Errorf("failed to write config file: %w", err)
-			}
-
-			fmt.Printf("Configuration file written to: %s\n", outputPath)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "Output file path (default: config.yaml)")
-	cmd.Flags().BoolVar(&withMFA, "mfa", false, "Enable MFA in generated config")
-
-	return cmd
-}
-
 func mfaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mfa",
@@ -844,7 +923,7 @@ func mfaCmd() *cobra.Command {
 				return fmt.Errorf("user-id is required")
 			}
 
-			resp, err := http.PostForm(serverURL+"/api/users/"+userID+"/mfa/enable", nil)
+			resp, err := apiPostForm(serverURL+"/api/users/"+userID+"/mfa/enable", nil)
 			if err != nil {
 				return fmt.Errorf("failed to enable MFA: %w", err)
 			}
@@ -890,7 +969,7 @@ func mfaCmd() *cobra.Command {
 				_, _ = fmt.Scanln(&code)
 
 				if code != "" {
-					verifyResp, err := http.Post(
+					verifyResp, err := apiPost(
 						serverURL+"/api/users/"+userID+"/mfa/verify",
 						"application/json",
 						bytes.NewBufferString(fmt.Sprintf(`{"code":"%s"}`, code)),
@@ -940,7 +1019,7 @@ func mfaCmd() *cobra.Command {
 			}
 
 			jsonData, _ := json.Marshal(data)
-			resp, err := http.Post(serverURL+"/api/users/"+userID+"/mfa/verify",
+			resp, err := apiPost(serverURL+"/api/users/"+userID+"/mfa/verify",
 				"application/json", bytes.NewBuffer(jsonData))
 			if err != nil {
 				return fmt.Errorf("failed to verify MFA: %w", err)
@@ -978,7 +1057,7 @@ func mfaCmd() *cobra.Command {
 				return fmt.Errorf("user-id is required")
 			}
 
-			resp, err := http.Get(serverURL + "/api/users/" + userID + "/mfa/status")
+			resp, err := apiGet(serverURL + "/api/users/" + userID + "/mfa/status")
 			if err != nil {
 				return fmt.Errorf("failed to check MFA status: %w", err)
 			}
@@ -1019,7 +1098,7 @@ func scopeCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all scopes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/api/scopes")
+			resp, err := apiGet(serverURL + "/api/scopes")
 			if err != nil {
 				return err
 			}
@@ -1062,7 +1141,7 @@ func scopeCmd() *cobra.Command {
 			}
 
 			jsonBody, _ := json.Marshal(body)
-			resp, err := http.Post(serverURL+"/api/scopes", "application/json", bytes.NewBuffer(jsonBody))
+			resp, err := apiPost(serverURL+"/api/scopes", "application/json", bytes.NewBuffer(jsonBody))
 			if err != nil {
 				return err
 			}
@@ -1101,7 +1180,7 @@ func scopeCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := withManagement(req)
 			if err != nil {
 				return err
 			}
@@ -1126,7 +1205,7 @@ func resourceCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all resource servers",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/api/resources")
+			resp, err := apiGet(serverURL + "/api/resources")
 			if err != nil {
 				return err
 			}
@@ -1169,7 +1248,7 @@ func resourceCmd() *cobra.Command {
 			}
 
 			jsonBody, _ := json.Marshal(body)
-			resp, err := http.Post(serverURL+"/api/resources", "application/json", bytes.NewBuffer(jsonBody))
+			resp, err := apiPost(serverURL+"/api/resources", "application/json", bytes.NewBuffer(jsonBody))
 			if err != nil {
 				return err
 			}
@@ -1208,7 +1287,7 @@ func resourceCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := withManagement(req)
 			if err != nil {
 				return err
 			}
@@ -1238,7 +1317,7 @@ func consentCmd() *cobra.Command {
 				return fmt.Errorf("user-id is required")
 			}
 
-			resp, err := http.Get(serverURL + "/api/consents?user_id=" + userID)
+			resp, err := apiGet(serverURL + "/api/consents?user_id=" + userID)
 			if err != nil {
 				return err
 			}
@@ -1278,7 +1357,7 @@ func consentCmd() *cobra.Command {
 				return err
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := withManagement(req)
 			if err != nil {
 				return err
 			}
@@ -1361,7 +1440,28 @@ func keysCmd() *cobra.Command {
 	generateCmd.Flags().Bool("dpop-only", false, "Generate only DPoP key")
 	generateCmd.Flags().Bool("client-only", false, "Generate only client signing key")
 
-	cmd.AddCommand(generateCmd)
+	rotateCmd := &cobra.Command{
+		Use:   "rotate",
+		Short: "Rotate the active signing keys",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resp, err := apiPost(serverURL+"/api/keys/rotate", "application/json", nil)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var result map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return err
+			}
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("key rotation failed: %v", result["error_description"])
+			}
+			fmt.Printf("Signing keys rotated: %v\n", result["kids"])
+			return nil
+		},
+	}
+
+	cmd.AddCommand(generateCmd, rotateCmd)
 	return cmd
 }
 

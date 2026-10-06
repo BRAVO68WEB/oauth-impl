@@ -2,42 +2,154 @@ package controller
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/bravo68web/oauth-impl/internal/branding"
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
+	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/service"
 )
 
 type WebController struct {
 	userSvc      *service.UserService
 	totpSvc      *service.TOTPService
+	account      *service.AccountService
 	cfg          *config.Config
 	oauthHandler *oauth.Handler
 	templates    *template.Template
+	theme        branding.Theme
+	social       *service.SocialService
+	audit        *service.AuditLog
 }
 
-func NewWebController(userSvc *service.UserService, totpSvc *service.TOTPService, cfg *config.Config, templateFS embed.FS, oauthHandler *oauth.Handler) (*WebController, error) {
+func (c *WebController) SetAudit(a *service.AuditLog) {
+	if c != nil {
+		c.audit = a
+	}
+}
+
+func (c *WebController) Templates() *template.Template {
+	return c.templates
+}
+
+func ParseTemplates(templateFS embed.FS, overlayDir string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"split": strings.Split,
 	}
-
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "internal/templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
+	}
+	if overlayDir == "" {
+		return tmpl, nil
+	}
+	info, err := os.Stat(overlayDir)
+	if err != nil {
+		return nil, fmt.Errorf("branding templates: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("branding templates: %s is not a directory", overlayDir)
+	}
+	matches, err := filepath.Glob(filepath.Join(overlayDir, "*.html"))
+	if err != nil {
+		return nil, fmt.Errorf("branding templates: %w", err)
+	}
+	for _, name := range matches {
+		body, err := os.ReadFile(name)
+		if err != nil {
+			return nil, fmt.Errorf("branding templates: %w", err)
+		}
+		if strings.TrimSpace(string(body)) == "" {
+			return nil, fmt.Errorf("branding templates: %s is empty", name)
+		}
+	}
+	if len(matches) == 0 {
+		return tmpl, nil
+	}
+	if _, err := tmpl.ParseFiles(matches...); err != nil {
+		return nil, fmt.Errorf("branding templates: %w", err)
+	}
+	return tmpl, nil
+}
+
+func NewWebController(userSvc *service.UserService, totpSvc *service.TOTPService, account *service.AccountService, cfg *config.Config, templateFS embed.FS, oauthHandler *oauth.Handler) (*WebController, error) {
+	overlay := ""
+	if cfg != nil {
+		overlay = cfg.Branding.Templates
+	}
+	tmpl, err := ParseTemplates(templateFS, overlay)
+	if err != nil {
+		return nil, err
 	}
 
 	return &WebController{
 		userSvc:      userSvc,
 		totpSvc:      totpSvc,
+		account:      account,
 		cfg:          cfg,
 		oauthHandler: oauthHandler,
 		templates:    tmpl,
+		theme:        branding.Prepare(cfg),
 	}, nil
+}
+
+func (c *WebController) SetSocial(s *service.SocialService) {
+	if c != nil {
+		c.social = s
+	}
+}
+
+func (c *WebController) ServeBrandAsset(w http.ResponseWriter, r *http.Request) {
+	branding.AssetHandler(c.cfg).ServeHTTP(w, r)
+}
+
+func (c *WebController) renderPage(w http.ResponseWriter, r *http.Request, page, pageTitle, heading string, params map[string]string, extra map[string]any) {
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	secure := c != nil && c.cfg != nil && c.cfg.Server.TLS.Enabled
+	extra["CSRFToken"] = issueCSRF(w, r, secure)
+	if c != nil && c.cfg != nil {
+		extra["BotProvider"] = c.cfg.Security.BotProtection.Provider
+		extra["BotSiteKey"] = c.cfg.Security.BotProtection.SiteKey
+	}
+	if page == "login.html" {
+		heading = c.theme.LoginTitle()
+	}
+	data := oauthTemplateData(params, extra)
+	clientName := ""
+	if c.oauthHandler != nil {
+		clientName = c.oauthHandler.ClientName(params["client_id"])
+	}
+	c.theme.Apply(data, pageTitle, heading, clientName)
+	if c.social != nil {
+		data["Providers"] = c.social.Buttons()
+	}
+	q := url.Values{}
+	for k, v := range params {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	data["OAuthQuery"] = q.Encode()
+	if c.templates == nil {
+		http.Error(w, "template unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := c.templates.ExecuteTemplate(w, page, data); err != nil {
+		http.Error(w, "Failed to render page", http.StatusInternalServerError)
+	}
 }
 
 func (c *WebController) getSession(r *http.Request) *oauth.Session {
@@ -45,10 +157,18 @@ func (c *WebController) getSession(r *http.Request) *oauth.Session {
 }
 
 // buildAuthorizeURL constructs /oauth/authorize URL with all OAuth params
+func (c *WebController) redirectAfterLogin(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	if next := SafeNext(params["next"]); next != "" {
+		http.Redirect(w, r, next, http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, c.buildAuthorizeURL(params), http.StatusFound)
+}
+
 func (c *WebController) buildAuthorizeURL(params map[string]string) string {
 	parts := []string{}
 	for k, v := range params {
-		if v != "" {
+		if v != "" && k != "next" {
 			parts = append(parts, k+"="+url.QueryEscape(v))
 		}
 	}
@@ -70,6 +190,7 @@ func extractOAuthParams(r *http.Request) map[string]string {
 		"prompt":                r.URL.Query().Get("prompt"),
 		"login_hint":            r.URL.Query().Get("login_hint"),
 		"resource":              r.URL.Query().Get("resource"),
+		"next":                  r.URL.Query().Get("next"),
 	}
 }
 
@@ -88,6 +209,7 @@ func extractOAuthParamsFromForm(r *http.Request) map[string]string {
 		"prompt":                r.FormValue("prompt"),
 		"login_hint":            r.FormValue("login_hint"),
 		"resource":              r.FormValue("resource"),
+		"next":                  r.FormValue("next"),
 	}
 }
 
@@ -106,6 +228,7 @@ func oauthTemplateData(params map[string]string, extra map[string]interface{}) m
 		"Prompt":              params["prompt"],
 		"LoginHint":           params["login_hint"],
 		"Resource":            params["resource"],
+		"Next":                params["next"],
 	}
 	for k, v := range extra {
 		data[k] = v
@@ -119,55 +242,150 @@ func oauthTemplateData(params map[string]string, extra map[string]interface{}) m
 
 func (c *WebController) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 	params := extractOAuthParams(r)
-	data := oauthTemplateData(params, map[string]interface{}{
+	c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
 		"Error":     "",
 		"LoginHint": params["login_hint"],
 	})
-	_ = c.templates.ExecuteTemplate(w, "login.html", data)
 }
 
 func (c *WebController) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if !csrfOK(r) {
+		rejectCSRF(w)
+		return
+	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	params := extractOAuthParamsFromForm(r)
+	if !c.botOK(w, r, username) {
+		return
+	}
 
 	user, err := c.userSvc.Authenticate(username, password)
 	if err != nil {
-		data := oauthTemplateData(params, map[string]interface{}{
+		if existing, lookupErr := c.userSvc.GetUserByUsername(username); lookupErr == nil && c.account != nil {
+			c.account.Record(existing, r, false, false)
+		}
+		c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
 			"Error": "Invalid credentials",
 		})
-		_ = c.templates.ExecuteTemplate(w, "login.html", data)
 		return
 	}
 
-	// Check if MFA is required server-wide
-	if c.cfg.Security.MFA.Required {
-		mfaEnabled, _ := c.totpSvc.IsMFAEnabled(user.ID)
-		if !mfaEnabled {
-			// MFA required but not enrolled → redirect to enrollment
-			c.oauthHandler.SetSessionWithMFA(w, user.ID, user.Username, false)
+	c.finishLogin(w, r, user, params)
+}
 
-			// Redirect to MFA enrollment with OAuth params
-			enrollURL := "/mfa/enroll?" + r.Form.Encode()
-			http.Redirect(w, r, enrollURL, http.StatusFound)
+func (c *WebController) finishLogin(w http.ResponseWriter, r *http.Request, user *models.User, params map[string]string) {
+	if c.cfg != nil && c.cfg.Security.MFA.Required && c.totpSvc != nil {
+		mfaEnabled, _ := c.totpSvc.IsMFAEnabled(user.ID)
+		c.oauthHandler.SetSessionRequest(w, r, user.ID, user.Username, false)
+		if !mfaEnabled {
+			http.Redirect(w, r, "/mfa/enroll?"+paramsQuery(params), http.StatusFound)
 			return
 		}
-
-		// MFA required and enrolled → show MFA verification
-		c.oauthHandler.SetSessionWithMFA(w, user.ID, user.Username, false)
-
-		data := oauthTemplateData(params, map[string]interface{}{
+		c.renderPage(w, r, "mfa.html", "Two-Factor Authentication", "Two-Factor Authentication", params, map[string]any{
 			"Error": "",
 		})
-		_ = c.templates.ExecuteTemplate(w, "mfa.html", data)
 		return
 	}
+	if c.account != nil {
+		c.account.Record(user, r, true, false)
+	}
+	if c.oauthHandler != nil {
+		c.oauthHandler.SetSessionRequest(w, r, user.ID, user.Username, true)
+	}
+	c.redirectAfterLogin(w, r, params)
+}
 
-	// No MFA required → set session and redirect to authorize
-	c.oauthHandler.SetSession(w, user.ID, user.Username)
-	authorizeURL := c.buildAuthorizeURL(params)
-	http.Redirect(w, r, authorizeURL, http.StatusFound)
+func (c *WebController) botOK(w http.ResponseWriter, r *http.Request, username string) bool {
+	if c == nil || c.cfg == nil || c.cfg.Security.BotProtection.Provider == "" {
+		return true
+	}
+	if err := service.VerifyBot(r.Context(), c.cfg.Security.BotProtection, r.FormValue("bot_token"), r.RemoteAddr); err != nil {
+		if username != "" && c.userSvc != nil {
+			if existing, lookupErr := c.userSvc.GetUserByUsername(username); lookupErr == nil && c.account != nil {
+				c.account.Record(existing, r, false, false)
+			}
+		}
+		if c.audit != nil {
+			c.audit.Write("user", username, "bot.failure", "login", username, r, map[string]any{"provider": c.cfg.Security.BotProtection.Provider})
+		}
+		writeError(w, http.StatusBadRequest, "bot_failed", "Bot verification failed")
+		return false
+	}
+	return true
+}
+
+func paramsQuery(params map[string]string) string {
+	q := url.Values{}
+	for k, v := range params {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	return q.Encode()
+}
+
+func (c *WebController) HandleSocialStart(w http.ResponseWriter, r *http.Request) {
+	if c.social == nil {
+		http.NotFound(w, r)
+		return
+	}
+	authURL, err := c.social.Begin(r.Context(), chi.URLParam(r, "provider"), extractOAuthParams(r))
+	if errors.Is(err, service.ErrSocialProviderNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		c.renderPage(w, r, "login.html", "Login", "Sign In", extractOAuthParams(r), map[string]any{
+			"Error": "The identity provider is unavailable.",
+		})
+		return
+	}
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (c *WebController) HandleSocialCallback(w http.ResponseWriter, r *http.Request) {
+	if c.social == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id := chi.URLParam(r, "provider")
+	result, err := c.social.Complete(r.Context(), id, r.URL.Query().Get("code"), r.URL.Query().Get("state"))
+	params := result.Params
+	if params == nil {
+		params = map[string]string{}
+	}
+	switch {
+	case errors.Is(err, service.ErrSocialProviderNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, service.ErrSocialRegistrationDisabled):
+		writeHTMLStatus(w, http.StatusForbidden, "Social registration is disabled", "Social registration is disabled. Sign in with an existing account.")
+	case errors.Is(err, service.ErrSocialEmailInUse):
+		c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
+			"Error": "An account with this email already exists. Sign in with your password.",
+		})
+	case errors.Is(err, service.ErrSocialAccountDisabled):
+		c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
+			"Error": "Invalid credentials",
+		})
+	case errors.Is(err, service.ErrSocialState):
+		c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
+			"Error": "Sign-in could not be completed. Try again.",
+		})
+	case err != nil:
+		c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
+			"Error": "The identity provider rejected the sign-in.",
+		})
+	default:
+		c.finishLogin(w, r, result.User, params)
+	}
+}
+
+func writeHTMLStatus(w http.ResponseWriter, status int, title, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body><h1>%s</h1><p>%s</p><p><a href=\"/login\">Sign in</a></p></body></html>", title, title, message)
 }
 
 // ──────────────────────────────────────────────
@@ -176,6 +394,10 @@ func (c *WebController) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (c *WebController) HandleMFA(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if !csrfOK(r) {
+		rejectCSRF(w)
+		return
+	}
 	code := r.FormValue("code")
 	params := extractOAuthParamsFromForm(r)
 
@@ -187,17 +409,20 @@ func (c *WebController) HandleMFA(w http.ResponseWriter, r *http.Request) {
 
 	valid, err := c.totpSvc.VerifyLogin(session.UserID, code)
 	if err != nil || !valid {
-		data := oauthTemplateData(params, map[string]interface{}{
+		if user, lookupErr := c.userSvc.GetUser(session.UserID); lookupErr == nil && c.account != nil {
+			c.account.Record(user, r, false, true)
+		}
+		c.renderPage(w, r, "mfa.html", "Two-Factor Authentication", "Two-Factor Authentication", params, map[string]any{
 			"Error": "Invalid TOTP code",
 		})
-		_ = c.templates.ExecuteTemplate(w, "mfa.html", data)
 		return
 	}
 
-	// MFA verified → create new session with MFA verified
-	c.oauthHandler.SetSession(w, session.UserID, session.Username)
-	authorizeURL := c.buildAuthorizeURL(params)
-	http.Redirect(w, r, authorizeURL, http.StatusFound)
+	c.oauthHandler.MarkSessionMFA(w, r)
+	if user, lookupErr := c.userSvc.GetUser(session.UserID); lookupErr == nil && c.account != nil {
+		c.account.Record(user, r, true, true)
+	}
+	c.redirectAfterLogin(w, r, params)
 }
 
 // ──────────────────────────────────────────────
@@ -215,26 +440,27 @@ func (c *WebController) HandleMFAEnrollPage(w http.ResponseWriter, r *http.Reque
 
 	result, err := c.totpSvc.EnableMFA(session.UserID, session.Username)
 	if err != nil {
-		data := oauthTemplateData(params, map[string]interface{}{
+		c.renderPage(w, r, "mfa_enroll.html", "Setup Two-Factor Authentication", "Setup Two-Factor Authentication", params, map[string]any{
 			"Error": "Failed to generate MFA enrollment",
 		})
-		_ = c.templates.ExecuteTemplate(w, "mfa_enroll.html", data)
 		return
 	}
 
-	data := oauthTemplateData(params, map[string]interface{}{
+	c.renderPage(w, r, "mfa_enroll.html", "Setup Two-Factor Authentication", "Setup Two-Factor Authentication", params, map[string]any{
 		"QRCodeBase64": result.QRBase64,
 		"Secret":       result.Secret,
 		"Issuer":       c.cfg.Security.MFA.Issuer,
 		"Username":     session.Username,
 		"Error":        "",
 	})
-
-	_ = c.templates.ExecuteTemplate(w, "mfa_enroll.html", data)
 }
 
 func (c *WebController) HandleMFAEnrollVerify(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if !csrfOK(r) {
+		rejectCSRF(w)
+		return
+	}
 	code := r.FormValue("code")
 	secret := r.FormValue("secret")
 	params := extractOAuthParamsFromForm(r)
@@ -247,48 +473,77 @@ func (c *WebController) HandleMFAEnrollVerify(w http.ResponseWriter, r *http.Req
 
 	if err := c.totpSvc.ConfirmMFA(session.UserID, code); err != nil {
 		result, _ := c.totpSvc.EnableMFA(session.UserID, session.Username)
-		data := oauthTemplateData(params, map[string]interface{}{
+		c.renderPage(w, r, "mfa_enroll.html", "Setup Two-Factor Authentication", "Setup Two-Factor Authentication", params, map[string]any{
 			"QRCodeBase64": result.QRBase64,
 			"Secret":       secret,
 			"Issuer":       c.cfg.Security.MFA.Issuer,
 			"Username":     session.Username,
 			"Error":        "Invalid code. Please try again.",
 		})
-		_ = c.templates.ExecuteTemplate(w, "mfa_enroll.html", data)
 		return
 	}
 
-	// MFA enrolled successfully → set session with MFA verified and redirect to authorize
-	c.oauthHandler.SetSession(w, session.UserID, session.Username)
-	authorizeURL := c.buildAuthorizeURL(params)
-	http.Redirect(w, r, authorizeURL, http.StatusFound)
+	c.oauthHandler.MarkSessionMFA(w, r)
+	c.redirectAfterLogin(w, r, params)
 }
 
 // ──────────────────────────────────────────────
 // Registration Flow
 // ──────────────────────────────────────────────
 
+func (c *WebController) registrationDisabled() bool {
+	return c != nil && c.cfg != nil && c.cfg.Security.DisableRegistration
+}
+
+func writeRegistrationDisabled(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Registration disabled</title></head><body><h1>Registration is disabled</h1><p><a href="/login">Sign in</a></p></body></html>`))
+}
+
 func (c *WebController) HandleRegisterPage(w http.ResponseWriter, r *http.Request) {
+	if c.registrationDisabled() {
+		writeRegistrationDisabled(w)
+		return
+	}
 	params := extractOAuthParams(r)
-	data := oauthTemplateData(params, map[string]interface{}{
+	c.renderPage(w, r, "register.html", "Register", "Create Account", params, map[string]any{
 		"Error": "",
 	})
-	_ = c.templates.ExecuteTemplate(w, "register.html", data)
 }
 
 func (c *WebController) HandleRegister(w http.ResponseWriter, r *http.Request) {
+	if c.registrationDisabled() {
+		writeRegistrationDisabled(w)
+		return
+	}
 	_ = r.ParseForm()
+	if !csrfOK(r) {
+		rejectCSRF(w)
+		return
+	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 	email := r.FormValue("email")
 	params := extractOAuthParamsFromForm(r)
+	if !c.botOK(w, r, username) {
+		return
+	}
 
-	_, err := c.userSvc.CreateUser(username, password, email, "")
+	var err error
+	if c.account != nil {
+		_, err = c.account.Register(username, password, email, "")
+	} else {
+		_, err = c.userSvc.CreateUser(username, password, email, "")
+	}
 	if err != nil {
-		data := oauthTemplateData(params, map[string]interface{}{
+		if errors.Is(err, service.ErrRegistrationDisabled) {
+			writeRegistrationDisabled(w)
+			return
+		}
+		c.renderPage(w, r, "register.html", "Register", "Create Account", params, map[string]any{
 			"Error": err.Error(),
 		})
-		_ = c.templates.ExecuteTemplate(w, "register.html", data)
 		return
 	}
 
@@ -321,16 +576,18 @@ func (c *WebController) HandleConsentPage(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	data := oauthTemplateData(params, map[string]interface{}{
+	c.renderPage(w, r, "consent.html", "Authorize", "Authorize Access", params, map[string]any{
 		"Username": session.Username,
 		"Scopes":   strings.Split(params["scope"], " "),
 	})
-
-	_ = c.templates.ExecuteTemplate(w, "consent.html", data)
 }
 
 func (c *WebController) HandleConsent(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if !csrfOK(r) {
+		rejectCSRF(w)
+		return
+	}
 	action := r.FormValue("action")
 	params := extractOAuthParamsFromForm(r)
 
@@ -376,7 +633,25 @@ func (c *WebController) HandleConsent(w http.ResponseWriter, r *http.Request) {
 		_ = c.oauthHandler.SaveConsent(session.UserID, clientID, scopes)
 	}
 
+	// prompt=consent forced this screen. Leaving it on the authorize URL
+	// shows the screen again instead of issuing a code.
+	params["prompt"] = stripPromptValue(params["prompt"], "consent")
+
 	// Redirect to authorize
 	authorizeURL := c.buildAuthorizeURL(params)
 	http.Redirect(w, r, authorizeURL, http.StatusFound)
+}
+
+// stripPromptValue removes one space-delimited prompt token.
+func stripPromptValue(prompt, drop string) string {
+	if prompt == "" || drop == "" {
+		return prompt
+	}
+	kept := make([]string, 0, 2)
+	for _, part := range strings.Fields(prompt) {
+		if part != drop {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, " ")
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
@@ -206,14 +207,15 @@ func (s *JARService) getKeyFromJWKS(jwksJSON string, header map[string]interface
 }
 
 func (s *JARService) getKeyFromJWKSUri(jwksUri string, header map[string]interface{}) (interface{}, error) {
-	resp, err := http.Get(jwksUri)
+	body, status, err := FetchSafe(context.Background(), nil, http.MethodGet, jwksUri, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS from %s: %w", jwksUri, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("jwks endpoint returned %d", status)
+	}
 	var jwks JWKS
-	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+	if err := json.Unmarshal(body, &jwks); err != nil {
 		return nil, fmt.Errorf("failed to decode JWKS: %w", err)
 	}
 

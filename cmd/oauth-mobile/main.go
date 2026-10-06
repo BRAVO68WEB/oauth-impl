@@ -25,6 +25,9 @@ func main() {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&serverURL, "server", "http://127.0.0.1:8080", "OAuth server URL")
+	rootCmd.PersistentFlags().StringVar(&mgmtClientID, "client-id", "", "Management client ID")
+	rootCmd.PersistentFlags().StringVar(&mgmtClientSecret, "client-secret", "", "Management client secret")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Config file used for management credentials")
 	rootCmd.PersistentFlags().IntVar(&interval, "interval", 5, "Polling interval in seconds")
 
 	rootCmd.AddCommand(
@@ -71,7 +74,7 @@ func pollCmd() *cobra.Command {
 }
 
 func pollForRequests() error {
-	resp, err := http.Get(serverURL + "/ciba/pending")
+	resp, err := apiGet(serverURL + "/ciba/pending")
 	if err != nil {
 		return err
 	}
@@ -113,7 +116,7 @@ func listCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List pending authorization requests",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := http.Get(serverURL + "/ciba/pending")
+			resp, err := apiGet(serverURL + "/ciba/pending")
 			if err != nil {
 				return err
 			}
@@ -162,7 +165,7 @@ func approveCmd() *cobra.Command {
 				url += "&user_id=" + userID
 			}
 
-			resp, err := http.Post(url, "application/json", nil)
+			resp, err := apiPost(url, "application/json", nil)
 			if err != nil {
 				return fmt.Errorf("failed to approve request: %w", err)
 			}
@@ -199,7 +202,7 @@ func denyCmd() *cobra.Command {
 				url += "&reason=" + reason
 			}
 
-			resp, err := http.Post(url, "application/json", nil)
+			resp, err := apiPost(url, "application/json", nil)
 			if err != nil {
 				return fmt.Errorf("failed to deny request: %w", err)
 			}

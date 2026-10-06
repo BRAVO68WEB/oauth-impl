@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,15 +17,20 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
+	root "github.com/bravo68web/oauth-impl"
+	"github.com/bravo68web/oauth-impl/internal/auth"
 	"github.com/bravo68web/oauth-impl/internal/config"
+	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
+	"github.com/bravo68web/oauth-impl/internal/hashalgo"
+	"github.com/bravo68web/oauth-impl/internal/mailer"
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
 	"github.com/bravo68web/oauth-impl/internal/queue"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/route"
 	"github.com/bravo68web/oauth-impl/internal/service"
 	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
@@ -43,6 +50,12 @@ type Server struct {
 	scopeRepo    *repository.ScopeRepository
 	resourceRepo *repository.ResourceRepository
 	consentRepo  *repository.ConsentRepository
+	userSvc      *service.UserService
+	accountCtrl  *controller.AccountController
+	mgmtCtrl     *controller.ManagementController
+	webCtrl      *controller.WebController
+	authn        *auth.Middleware
+	audit        *service.AuditLog
 }
 
 func New(cfg *config.Config, db *database.DB, q *queue.MemoryQueue) (*Server, error) {
@@ -65,12 +78,78 @@ func New(cfg *config.Config, db *database.DB, q *queue.MemoryQueue) (*Server, er
 		return nil, fmt.Errorf("failed to create OIDC handler: %w", err)
 	}
 
-	// Services
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("working directory: %w", err)
+	}
+	cfg.Normalize()
+	if err := config.ValidateBranding(cfg); err != nil {
+		return nil, err
+	}
+	if err := config.ValidateSocial(cfg); err != nil {
+		return nil, err
+	}
+	if err := config.ValidatePlatform(cfg); err != nil {
+		return nil, err
+	}
+	if err := service.ValidateTrustedProxies(cfg.Security.TrustedProxies); err != nil {
+		return nil, err
+	}
+	hasher, err := hashalgo.Prepare(wd, os.Getenv("HASH_ALGO"), cfg.Security.HashAlgo)
+	if err != nil {
+		return nil, err
+	}
+
 	dpopSvc := service.NewDPoPService()
 	mtlsSvc := service.NewMTLSService()
 	jarSvc := service.NewJARService(cfg.Security.Issuer)
+	totpSvc := service.NewTOTPService(userRepo, &cfg.Security.MFA)
+	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security, hasher)
 
-	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler)
+	if err := service.SeedManagementClient(clientRepo, cfg); err != nil {
+		return nil, err
+	}
+	mail, err := mailer.New(cfg.SMTP)
+	if err != nil {
+		return nil, err
+	}
+	sessionSvc := service.NewSessionService(repository.NewSessionRepository(conn), cfg.Security.SessionLifetime)
+	logoutSvc := service.NewLogoutService(sessionSvc, clientRepo, oidcHandler)
+	accountSvc := service.NewAccountService(userSvc, userRepo, repository.NewEmailTokenRepository(conn), repository.NewLoginEventRepository(conn), sessionSvc, tokenRepo, mail, logoutSvc, cfg)
+	hooks := service.NewWebhookDispatcher(repository.NewWebhookRepository(conn))
+	hooks.SetFetchConfig(cfg)
+	logoutSvc.SetFetchConfig(cfg)
+	accountSvc.SetWebhooks(hooks)
+	logoutSvc.SetWebhooks(hooks)
+	oidcHandler.SetDPoPCheck(func(header, method, uri, accessToken string) error {
+		_, err := dpopSvc.ValidateDPoPProof(header, method, uri, accessToken)
+		return err
+	})
+	oidc.StartRotation(oidcHandler.GetKeySet(), cfg.OIDC.KeyRotationInterval, cfg.OIDC.KeyRetain)
+	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler, userSvc, sessionSvc, logoutSvc, accountSvc)
+	oauthHandler.SetWebhooks(hooks)
+	pages, err := controller.ParseTemplates(root.TemplateFS, cfg.Branding.Templates)
+	if err != nil {
+		return nil, err
+	}
+	oauthHandler.SetTemplates(pages)
+	clientSvc := service.NewClientService(clientRepo)
+	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
+	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo, accountSvc, sessionSvc, tokenRepo)
+	auditLog := service.NewAuditLog(repository.NewAuditRepository(conn))
+	mgmtCtrl.SetWebhooks(hooks)
+	mgmtCtrl.SetAudit(auditLog)
+	mgmtCtrl.SetKeys(oidcHandler.GetKeySet(), cfg.OIDC.KeyRetain)
+	oauthHandler.SetAudit(auditLog)
+	accountCtrl := controller.NewAccountController(accountSvc, userSvc, sessionSvc, tokenRepo, totpSvc, oauthHandler, pages, cfg)
+	accountCtrl.SetAudit(auditLog)
+	webCtrl, err := controller.NewWebController(userSvc, totpSvc, accountSvc, cfg, root.TemplateFS, oauthHandler)
+	if err != nil {
+		return nil, err
+	}
+	webCtrl.SetAudit(auditLog)
+	webCtrl.SetSocial(service.NewSocialService(cfg, userSvc, userRepo, repository.NewSocialRepository(conn), accountSvc, nil))
+	authn := auth.NewMiddleware(tokenRepo, clientRepo, userRepo, dpopSvc)
 
 	s := &Server{
 		cfg:          cfg,
@@ -85,6 +164,12 @@ func New(cfg *config.Config, db *database.DB, q *queue.MemoryQueue) (*Server, er
 		scopeRepo:    scopeRepo,
 		resourceRepo: resourceRepo,
 		consentRepo:  consentRepo,
+		userSvc:      userSvc,
+		accountCtrl:  accountCtrl,
+		mgmtCtrl:     mgmtCtrl,
+		webCtrl:      webCtrl,
+		authn:        authn,
+		audit:        auditLog,
 	}
 
 	s.router = s.setupRouter()
@@ -123,37 +208,18 @@ func (s *Server) setupRouter() *chi.Mux {
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("X-XSS-Protection", "1; mode=block")
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net")
+			w.Header().Set("Content-Security-Policy", service.ContentSecurityPolicy(s.cfg.Security.BotProtection.Provider))
 			next.ServeHTTP(w, req)
 		})
 	})
 
 	r.Get("/health", s.handleHealth)
 
-	r.Route("/api", func(r chi.Router) {
-		r.Route("/clients", func(r chi.Router) {
-			r.Get("/", s.handleListClients)
-			r.Post("/", s.handleCreateClient)
-			r.Get("/{clientID}", s.handleGetClient)
-			r.Put("/{clientID}", s.handleUpdateClient)
-			r.Delete("/{clientID}", s.handleDeleteClient)
-		})
-
-		r.Route("/users", func(r chi.Router) {
-			r.Get("/", s.handleListUsers)
-			r.Post("/", s.handleCreateUser)
-			r.Get("/{userID}", s.handleGetUser)
-		})
-
-		r.Route("/tokens", func(r chi.Router) {
-			r.Get("/", s.handleListTokens)
-			r.Post("/{token}/revoke", s.handleRevokeToken)
-		})
-
-		r.Route("/ciba", func(r chi.Router) {
-			r.Get("/pending", s.handleCIBAPending)
-			r.Post("/{authReqID}/approve", s.handleCIBAApprove)
-			r.Post("/{authReqID}/deny", s.handleCIBADeny)
+	r.Route("/api", func(api chi.Router) {
+		route.MountAccountAPI(api, s.accountCtrl, s.authn.RequireUser)
+		api.Group(func(r chi.Router) {
+			r.Use(s.authn.RequireManagement)
+			mountLegacyManagement(r, s)
 		})
 	})
 
@@ -175,6 +241,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	})
 
 	r.Route("/ciba", func(r chi.Router) {
+		r.Use(s.authn.RequireManagement)
 		r.Get("/pending", s.oauthHandler.HandleCIBAListPending)
 		r.Get("/status", s.oauthHandler.HandleCIBAStatus)
 		r.Post("/approve", s.oauthHandler.HandleCIBAApprove)
@@ -191,11 +258,55 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Get("/jwks", s.oidcHandler.HandleJWKS)
 	})
 
-	r.Get("/login", s.handleLogin)
-	r.Get("/register", s.handleRegisterPage)
+	route.MountBrowserExtras(r, s.accountCtrl, s.oauthHandler)
+
+	r.Get("/branding/assets/{name}", s.webCtrl.ServeBrandAsset)
+	r.Get("/login/social/{provider}/callback", s.webCtrl.HandleSocialCallback)
+	r.Get("/login/social/{provider}", s.webCtrl.HandleSocialStart)
+	r.Get("/login", s.webCtrl.HandleLoginPage)
+	r.Post("/login", s.webCtrl.HandleLogin)
+	r.Post("/login/mfa", s.webCtrl.HandleMFA)
+	r.Get("/register", s.webCtrl.HandleRegisterPage)
+	r.Post("/register", s.webCtrl.HandleRegister)
 	r.Get("/consent", s.handleConsent)
 
 	return r
+}
+
+func mountLegacyManagement(r chi.Router, s *Server) {
+	r.Route("/clients", func(r chi.Router) {
+		r.Get("/", s.handleListClients)
+		r.Post("/", s.handleCreateClient)
+		r.Get("/{clientID}", s.handleGetClient)
+		r.Put("/{clientID}", s.handleUpdateClient)
+		r.Delete("/{clientID}", s.handleDeleteClient)
+	})
+	r.Route("/users", func(r chi.Router) {
+		r.Get("/", s.handleListUsers)
+		r.Post("/", s.handleCreateUser)
+		r.Get("/{userID}", s.handleGetUser)
+	})
+	r.Route("/tokens", func(r chi.Router) {
+		r.Get("/", s.handleListTokens)
+		r.Post("/{token}/revoke", s.handleRevokeToken)
+	})
+	r.Route("/ciba", func(r chi.Router) {
+		r.Get("/pending", s.handleCIBAPending)
+		r.Post("/{authReqID}/approve", s.handleCIBAApprove)
+		r.Post("/{authReqID}/deny", s.handleCIBADeny)
+	})
+	route.MountManagementExtras(r, s.mgmtCtrl)
+}
+
+func (s *Server) writeAudit(r *http.Request, action, targetType, targetID string, meta map[string]any) {
+	if s == nil || s.audit == nil {
+		return
+	}
+	actor := "unknown"
+	if tok := auth.TokenFrom(r.Context()); tok != nil && tok.ClientID != "" {
+		actor = tok.ClientID
+	}
+	s.audit.Write("client", actor, action, targetType, targetID, r, meta)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +357,9 @@ func (s *Server) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 	if client.TokenEndpointAuthMethod == "" {
 		client.TokenEndpointAuthMethod = "client_secret_basic"
 	}
+	if client.RegistrationSource == "" {
+		client.RegistrationSource = "management"
+	}
 	client.CreatedAt = time.Now()
 	client.UpdatedAt = time.Now()
 
@@ -255,6 +369,7 @@ func (s *Server) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.writeAudit(r, "client.create", "client", client.ID, map[string]any{"name": client.Name})
 
 	writeJSON(w, http.StatusCreated, client)
 }
@@ -321,6 +436,8 @@ func (s *Server) handleUpdateClient(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.DPoPBoundAccessTokens = update.DPoPBoundAccessTokens
 	existing.RequirePushedAuthorizationRequests = update.RequirePushedAuthorizationRequests
+	existing.DCREnabled = update.DCREnabled
+	existing.CIMDEnabled = update.CIMDEnabled
 	existing.UpdatedAt = time.Now()
 
 	if err := s.clientRepo.Update(existing); err != nil {
@@ -329,6 +446,7 @@ func (s *Server) handleUpdateClient(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.writeAudit(r, "client.update", "client", existing.ID, map[string]any{"name": existing.Name})
 
 	writeJSON(w, http.StatusOK, existing)
 }
@@ -348,6 +466,7 @@ func (s *Server) handleDeleteClient(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.writeAudit(r, "client.delete", "client", clientID, map[string]any{})
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Client deleted",
@@ -401,36 +520,28 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Username == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "username and password are required",
-		})
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	user, err := s.userSvc.CreateUser(req.Username, req.Password, req.Email, req.Phone)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "Failed to hash password",
+		var pe *service.PasswordError
+		if errors.As(err, &pe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error":             "invalid_password",
+				"error_description": pe.Error(),
+			})
+			return
+		}
+		status := http.StatusBadRequest
+		msg := err.Error()
+		if strings.Contains(msg, "already exists") || strings.Contains(msg, "UNIQUE") {
+			status = http.StatusConflict
+			msg = "Username already exists"
+		}
+		writeJSON(w, status, map[string]string{
+			"error": msg,
 		})
 		return
 	}
-
-	user := &models.User{
-		ID:           uuid.New().String(),
-		Username:     req.Username,
-		PasswordHash: string(hash),
-		Email:        req.Email,
-		PhoneNumber:  req.Phone,
-		CreatedAt:    time.Now(),
-	}
-
-	if err := s.userRepo.Create(user); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Username already exists",
-		})
-		return
-	}
+	s.writeAudit(r, "user.create", "user", user.ID, map[string]any{"username": user.Username})
 
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"id":       user.ID,

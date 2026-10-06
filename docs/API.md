@@ -261,6 +261,14 @@ Returns user profile information based on scopes.
 
 ## Management API
 
+`/api` and `/ciba` require `Authorization: Bearer` with a client-credentials
+access token whose scope contains `management`. Obtain it from `POST /oauth/token`
+with `grant_type=client_credentials&scope=management`.
+
+`oauth-cli init` writes that client into `management.client_id` and
+`management.client_secret`. The server inserts the client on startup when
+the id is missing.
+
 ### Clients
 
 ```
@@ -277,14 +285,72 @@ DELETE /api/clients/:id      - Delete client
 GET  /api/users              - List all users
 POST /api/users              - Create user
 GET  /api/users/:id          - Get user
+PATCH /api/users/:id         - Update profile, disabled, email_verified
+POST /api/users/:id/password - Set password
+GET  /api/users/:id/sessions - List browser sessions
+DELETE /api/users/:id/sessions/:sid
+GET  /api/users/:id/activity - Login activity
+GET  /api/users/:id/login-analytics?window=720h
+GET  /api/analytics/logins?window=720h - All users, grouped by IP and day
 ```
 
 ### Tokens
 
 ```
-GET  /api/tokens             - List tokens (filter by client_id, user_id)
-POST /api/tokens/:token/revoke - Revoke token
+GET  /api/tokens             - List access tokens (filter by client_id, user_id)
+POST /api/tokens/:token/revoke - Revoke access token
+GET  /api/refresh-tokens     - List refresh tokens by public id
+POST /api/refresh-tokens/:id/revoke
 ```
+
+## CIAM API
+
+Public routes:
+
+```
+POST /api/account/register   - 403 registration_disabled when security.disable_registration is true
+POST /api/account/password/forgot
+POST /api/account/password/reset
+POST /api/account/email/verify
+```
+
+User access token routes:
+
+```
+GET    /api/me
+PATCH  /api/me
+POST   /api/me/password
+POST   /api/me/email/send
+GET    /api/me/sessions
+DELETE /api/me/sessions/:sid
+GET    /api/me/refresh-tokens
+DELETE /api/me/refresh-tokens/:id
+GET    /api/me/activity
+GET    /api/me/login-analytics?window=720h
+```
+
+Browser pages: `/login`, `/register`, `/consent`, `/mfa/enroll`, `/forgot`, `/reset`, `/verify-email`, `/device`, `/oauth/logout`.
+
+`GET /login/social/{id}` redirects to an enabled provider from `social.providers`. `GET /login/social/{id}/callback` finishes sign-in. `security.disable_social_registration` returns 403 when that provider account is not already linked.
+
+`GET /branding/assets/{name}` serves one file from `branding.assets_dir` (png, jpg, jpeg, gif, webp, svg, ico, or css, up to 1 MiB). The page copy, colors, and optional HTML overlay come from the `branding` config block and apply on restart.
+
+## Webhooks
+
+Management token required. Each webhook chooses its events.
+
+```
+GET    /api/webhooks
+POST   /api/webhooks
+GET    /api/webhooks/:id
+PATCH  /api/webhooks/:id
+DELETE /api/webhooks/:id
+POST   /api/webhooks/:id/test
+```
+
+`POST` body: `url`, `events` (or `["*"]`), optional `secret`, `description`, `enabled`.
+Deliveries are JSON with `X-Webhook-Event`, `X-Webhook-Timestamp`, and
+`X-Webhook-Signature: sha256=<hmac of timestamp + "." + body>`.
 
 ### CIBA
 
@@ -332,9 +398,34 @@ All errors follow RFC 6749 format:
 }
 ```
 
+`/api` routes other than self-service registration, forgot-password, reset, and email verify require a bearer token. Management routes require a client-credentials token whose scope includes `management`. A user token receives 403.
+
+```
+GET   /api/audit?window=720h&action=&actor_id=
+POST  /api/keys/rotate
+```
+
+`POST /api/keys/rotate` publishes new RSA and EC signing keys and keeps the previous public keys until `key_retain` elapses. The response lists key ids. Private keys stay in SQLite.
+
+`dpop_bound_access_tokens` on an OAuth app forces a DPoP proof on every token grant, on UserInfo, and on revocation of a bound token. `security.dpop.enabled` only controls whether other apps may send an unsolicited proof.
+
+Dynamic client registration (`POST /oauth/register`) is open when `registration.dcr_enabled` is true. The new row is stored with `registration_source=dcr` and `dcr_enabled=true`. Authorize and token reject that client with `unauthorized_client` unless both the tenant flag and the row flag stay true. An HTTPS `client_id` is a Client ID Metadata Document when `registration.cimd_enabled` is true and the row is not disabled.
+
+Browser POSTs to `/login`, `/register`, `/consent`, `/forgot`, `/reset`, `/mfa/enroll/verify`, `/device`, and `/oauth/logout` require the `csrf_token` field copied from the form. A mismatch is 403 `csrf_failed`.
+
+`POST /login`, `POST /register`, and `POST /forgot` check `bot_token` when `security.bot_protection.provider` is `recaptcha` or `turnstile`. A missing or rejected token is 400 `bot_failed`.
+
+Password creates, resets, and changes use `security.password`. A failure is 400 `invalid_password`. Login does not recheck complexity.
+
+ID tokens and UserInfo use `oidc.claim_mappings` when that list is non-empty. An empty list keeps the scope claims from `profile`, `email`, and `phone`.
+
 Common error codes:
 - `invalid_request` - Malformed request
 - `invalid_client` - Client authentication failed
+- `invalid_password` - Password does not meet the configured complexity rules
+- `bot_failed` - Bot token missing or rejected
+- `csrf_failed` - Browser form token missing or mismatched
+- `registration_disabled` - Self-service signup or dynamic client registration is turned off
 - `invalid_grant` - Invalid authorization grant
 - `unauthorized_client` - Client not authorized for grant type
 - `unsupported_grant_type` - Grant type not supported

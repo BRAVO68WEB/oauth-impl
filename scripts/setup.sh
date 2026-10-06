@@ -21,10 +21,27 @@ else
     echo "   Server is running"
 fi
 
+MGMT_ID="${MGMT_CLIENT_ID:-}"
+MGMT_SECRET="${MGMT_CLIENT_SECRET:-}"
+if [ -z "$MGMT_ID" ] && [ -f config.yaml ]; then
+    MGMT_ID=$(awk '/^management:/{f=1} f && /client_id:/{gsub(/"/,"",$2); print $2; exit}' config.yaml)
+    MGMT_SECRET=$(awk '/^management:/{f=1} f && /client_secret:/{gsub(/"/,"",$2); print $2; exit}' config.yaml)
+fi
+if [ -z "$MGMT_ID" ] || [ -z "$MGMT_SECRET" ]; then
+    echo "Set management.client_id and management.client_secret (oauth-cli init writes them), then restart the server."
+    exit 1
+fi
+MGMT_TOKEN=$(curl -s -X POST "$SERVER_URL/oauth/token" -u "$MGMT_ID:$MGMT_SECRET" -d "grant_type=client_credentials&scope=management" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+if [ -z "$MGMT_TOKEN" ]; then
+    echo "Failed to obtain a management access token."
+    exit 1
+fi
+
 # Create master client
 echo ""
 echo "2. Creating master client..."
 RESPONSE=$(curl -s -X POST "$SERVER_URL/api/clients" \
+    -H "Authorization: Bearer $MGMT_TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
         "name": "Master Client",
@@ -61,6 +78,7 @@ echo ""
 # Create test user
 echo "3. Creating test user..."
 curl -s -X POST "$SERVER_URL/api/users" \
+    -H "Authorization: Bearer $MGMT_TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
         "username": "admin",

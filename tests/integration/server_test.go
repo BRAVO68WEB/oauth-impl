@@ -3,9 +3,12 @@ package integration
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
@@ -27,6 +30,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 
 	cfg := config.DefaultConfig()
 	cfg.Security.RequirePKCE = false
+	cfg.Security.AllowInsecureFetch = true
+	cfg.Security.FetchAllowIPs = []string{"127.0.0.1", "::1"}
+	cfg.Management.ClientID = "test-mgmt"
+	cfg.Management.ClientSecret = "test-mgmt-secret"
 
 	q := queue.NewMemoryQueue(100)
 
@@ -217,5 +224,83 @@ func TestJWKSEndpoint(t *testing.T) {
 
 	if len(keys) != 2 {
 		t.Errorf("Expected 2 keys, got %d", len(keys))
+	}
+}
+
+func TestPasswordGrantUsesHasher(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	userReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/users", strings.NewReader(`{"username":"ada","password":"correct horse","email":"ada@example.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	userReq.Header.Set("Content-Type", "application/json")
+	userReq.Header.Set("Authorization", "Bearer "+managementAccessToken(t, ts.URL))
+	userResp, err := http.DefaultClient.Do(userReq)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	userBody, _ := io.ReadAll(userResp.Body)
+	_ = userResp.Body.Close()
+	if userResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create user status %d: %s", userResp.StatusCode, userBody)
+	}
+
+	regResp, err := http.Post(ts.URL+"/oauth/register", "application/json", strings.NewReader(`{"client_name":"Password App","redirect_uris":["https://example.com/cb"],"grant_types":["password"]}`))
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	var client struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.NewDecoder(regResp.Body).Decode(&client); err != nil {
+		t.Fatalf("decode client: %v", err)
+	}
+	_ = regResp.Body.Close()
+	if regResp.StatusCode != http.StatusCreated {
+		t.Fatalf("register status %d", regResp.StatusCode)
+	}
+
+	token := func(password string) (*http.Response, []byte) {
+		t.Helper()
+		form := url.Values{}
+		form.Set("grant_type", "password")
+		form.Set("username", "ada")
+		form.Set("password", password)
+		form.Set("client_id", client.ClientID)
+		form.Set("client_secret", client.ClientSecret)
+		resp, err := http.Post(ts.URL+"/oauth/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatalf("token: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp, body
+	}
+
+	okResp, okBody := token("correct horse")
+	if okResp.StatusCode != http.StatusOK {
+		t.Fatalf("password grant status %d: %s", okResp.StatusCode, okBody)
+	}
+	var granted map[string]interface{}
+	if err := json.Unmarshal(okBody, &granted); err != nil {
+		t.Fatal(err)
+	}
+	if granted["access_token"] == nil || granted["access_token"] == "" {
+		t.Fatalf("missing access_token: %s", okBody)
+	}
+
+	badResp, badBody := token("wrong password")
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong password status %d: %s", badResp.StatusCode, badBody)
+	}
+	var denied map[string]string
+	if err := json.Unmarshal(badBody, &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied["error"] != "invalid_grant" {
+		t.Fatalf("error = %q", denied["error"])
 	}
 }

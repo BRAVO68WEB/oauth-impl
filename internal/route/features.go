@@ -1,0 +1,61 @@
+package route
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/bravo68web/oauth-impl/internal/controller"
+	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
+)
+
+func MountAccountAPI(api chi.Router, account *controller.AccountController, userMW func(http.Handler) http.Handler) {
+	api.Post("/account/register", account.HandleRegister)
+	api.Post("/account/password/forgot", account.HandleForgot)
+	api.Post("/account/password/reset", account.HandleReset)
+	api.Post("/account/email/verify", account.HandleVerifyEmail)
+
+	api.Group(func(me chi.Router) {
+		me.Use(userMW)
+		me.Get("/me", account.HandleMe)
+		me.Patch("/me", account.HandlePatchMe)
+		me.Post("/me/password", account.HandleChangePassword)
+		me.Post("/me/email/send", account.HandleResend)
+		me.Get("/me/sessions", account.HandleListSessions)
+		me.Delete("/me/sessions/{sid}", account.HandleRevokeSession)
+		me.Get("/me/refresh-tokens", account.HandleListRefresh)
+		me.Delete("/me/refresh-tokens/{id}", account.HandleRevokeRefresh)
+		me.Get("/me/activity", account.HandleActivity)
+		me.Get("/me/login-analytics", account.HandleLoginAnalytics)
+	})
+}
+
+func MountManagementExtras(api chi.Router, mgmt *controller.ManagementController) {
+	api.Patch("/users/{userID}", mgmt.HandlePatchUser)
+	api.Post("/users/{userID}/password", mgmt.HandleSetPassword)
+	api.Get("/users/{userID}/sessions", mgmt.HandleListUserSessions)
+	api.Delete("/users/{userID}/sessions/{sid}", mgmt.HandleRevokeUserSession)
+	api.Get("/users/{userID}/activity", mgmt.HandleUserActivity)
+	api.Get("/users/{userID}/login-analytics", mgmt.HandleUserLoginAnalytics)
+	api.Get("/analytics/logins", mgmt.HandleGlobalLoginAnalytics)
+	api.Get("/refresh-tokens", mgmt.HandleListRefreshTokens)
+	api.Post("/refresh-tokens/{id}/revoke", mgmt.HandleRevokeRefreshToken)
+	api.Get("/webhooks", mgmt.HandleListWebhooks)
+	api.Post("/webhooks", mgmt.HandleCreateWebhook)
+	api.Get("/webhooks/{id}", mgmt.HandleGetWebhook)
+	api.Patch("/webhooks/{id}", mgmt.HandleUpdateWebhook)
+	api.Delete("/webhooks/{id}", mgmt.HandleDeleteWebhook)
+	api.Post("/webhooks/{id}/test", mgmt.HandleTestWebhook)
+	api.Get("/audit", mgmt.HandleListAudit)
+	api.Post("/keys/rotate", mgmt.HandleRotateKeys)
+}
+
+func MountBrowserExtras(r chi.Router, account *controller.AccountController, oauthHandler *oauth.Handler) {
+	r.Get("/forgot", account.HandleForgotPage)
+	r.Post("/forgot", account.HandleForgotSubmit)
+	r.Get("/reset", account.HandleResetPage)
+	r.Post("/reset", account.HandleResetSubmit)
+	r.Get("/verify-email", account.HandleVerifyPage)
+	r.Get("/oauth/logout", oauthHandler.HandleLogout)
+	r.Post("/oauth/logout", oauthHandler.HandleLogout)
+}

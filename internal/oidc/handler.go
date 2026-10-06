@@ -1,14 +1,12 @@
 package oidc
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
+	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,20 +16,26 @@ import (
 
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/database"
+	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type Handler struct {
-	db     *database.DB
-	cfg    *config.Config
-	keySet *KeySet
+	db        *database.DB
+	cfg       *config.Config
+	keySet    *KeySet
+	checkDPoP func(header, method, uri, accessToken string) error
+}
+
+func (h *Handler) SetDPoPCheck(fn func(header, method, uri, accessToken string) error) {
+	if h != nil {
+		h.checkDPoP = fn
+	}
 }
 
 type KeySet struct {
-	mu     sync.RWMutex
-	rsaKey *rsa.PrivateKey
-	ecKey  *ecdsa.PrivateKey
-	rsaKid string
-	ecKid  string
+	mu   sync.RWMutex
+	db   *sql.DB
+	keys []storedKey
 }
 
 type JWK struct {
@@ -51,7 +55,11 @@ type JWKS struct {
 }
 
 func NewHandler(db *database.DB, cfg *config.Config) (*Handler, error) {
-	keySet, err := NewKeySet()
+	var conn *sql.DB
+	if db != nil {
+		conn = db.Conn()
+	}
+	keySet, err := LoadKeySet(conn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key set: %w", err)
 	}
@@ -63,28 +71,6 @@ func NewHandler(db *database.DB, cfg *config.Config) (*Handler, error) {
 	}, nil
 }
 
-func NewKeySet() (*KeySet, error) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
-	}
-
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate EC key: %w", err)
-	}
-
-	rsaKid := generateKid()
-	ecKid := generateKid()
-
-	return &KeySet{
-		rsaKey: rsaKey,
-		ecKey:  ecKey,
-		rsaKid: rsaKid,
-		ecKid:  ecKid,
-	}, nil
-}
-
 func generateKid() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -92,64 +78,6 @@ func generateKid() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func (ks *KeySet) GetRSAKey() (*rsa.PrivateKey, string) {
-	return ks.rsaKey, ks.rsaKid
-}
-
-func (ks *KeySet) GetECKey() (*ecdsa.PrivateKey, string) {
-	return ks.ecKey, ks.ecKid
-}
-
-func (ks *KeySet) GetPublicKey(kid string) interface{} {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
-
-	if kid == ks.rsaKid {
-		return &ks.rsaKey.PublicKey
-	}
-	if kid == ks.ecKid {
-		return &ks.ecKey.PublicKey
-	}
-	return nil
-}
-
-func (ks *KeySet) ToJWKS() JWKS {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
-
-	rsaN := base64.RawURLEncoding.EncodeToString(ks.rsaKey.N.Bytes())
-	rsaE := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(ks.rsaKey.PublicKey.E)).Bytes())
-
-	// Get EC public key coordinates via ECDH API (non-deprecated)
-	ecdhKey, _ := ks.ecKey.PublicKey.ECDH()
-	ecPubBytes := ecdhKey.Bytes()
-	// Uncompressed format: 0x04 || X || Y (each 32 bytes for P-256)
-	ecX := base64.RawURLEncoding.EncodeToString(ecPubBytes[1:33])
-	ecY := base64.RawURLEncoding.EncodeToString(ecPubBytes[33:65])
-
-	return JWKS{
-		Keys: []JWK{
-			{
-				Kty: "RSA",
-				Kid: ks.rsaKid,
-				Use: "sig",
-				Alg: "RS256",
-				N:   rsaN,
-				E:   rsaE,
-			},
-			{
-				Kty: "EC",
-				Kid: ks.ecKid,
-				Use: "sig",
-				Alg: "ES256",
-				Crv: "P-256",
-				X:   ecX,
-				Y:   ecY,
-			},
-		},
-	}
 }
 
 type IDTokenClaims struct {
@@ -164,91 +92,139 @@ type IDTokenClaims struct {
 	Email             string `json:"email,omitempty"`
 	EmailVerified     bool   `json:"email_verified,omitempty"`
 	Picture           string `json:"picture,omitempty"`
+	SID               string `json:"sid,omitempty"`
 	Sub               string `json:"sub"`
 }
 
-func (h *Handler) CreateIDToken(clientID, userID, nonce string, scopes []string) (string, error) {
-	issuer := h.cfg.Security.Issuer
-	if issuer == "" {
-		issuer = fmt.Sprintf("http://localhost:%d", h.cfg.Server.Port)
-	}
+type IDTokenExtra struct {
+	SID      string
+	AuthTime time.Time
+}
 
-	now := time.Now()
-	claims := IDTokenClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    issuer,
-			Subject:   userID,
-			Audience:  jwt.ClaimStrings{clientID},
-			ExpiresAt: jwt.NewNumericDate(now.Add(1 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-		},
-		Sub:   userID,
-		Nonce: nonce,
-	}
-
-	for _, scope := range scopes {
-		switch scope {
-		case "profile":
-			if user, err := h.db.GetUser(userID); err == nil {
-				claims.Name = user.Username
-				claims.PreferredUsername = user.Username
-			}
-		case "email":
-			if user, err := h.db.GetUser(userID); err == nil {
-				claims.Email = user.Email
-				claims.EmailVerified = user.Email != ""
-			}
-		}
-	}
-
+func (h *Handler) CreateIDToken(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (string, error) {
 	key, kid := h.keySet.GetRSAKey()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = kid
+	return signIDToken(jwt.SigningMethodRS256, kid, key, h.identityClaims(clientID, userID, nonce, scopes, extra...))
+}
 
+func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (string, error) {
+	key, kid := h.keySet.GetECKey()
+	return signIDToken(jwt.SigningMethodES256, kid, key, h.identityClaims(clientID, userID, nonce, scopes, extra...))
+}
+
+// CreateAccessTokenJWT signs an access token with the active RSA key.
+// Callers still store the compact token so revocation and UserInfo keep working.
+func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string, lifetime time.Duration) (string, error) {
+	if h == nil || h.keySet == nil {
+		return "", fmt.Errorf("signing keys are not loaded")
+	}
+	if lifetime <= 0 {
+		lifetime = time.Hour
+	}
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
+	sub := userID
+	if sub == "" {
+		sub = clientID
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"iss":        h.issuer(),
+		"sub":        sub,
+		"aud":        clientID,
+		"exp":        now.Add(lifetime).Unix(),
+		"iat":        now.Unix(),
+		"jti":        hex.EncodeToString(raw),
+		"client_id":  clientID,
+		"scope":      scope,
+		"token_type": tokenType,
+	}
+	key, kid := h.keySet.GetRSAKey()
+	if key == nil {
+		return "", fmt.Errorf("no active rsa signing key")
+	}
+	return signIDToken(jwt.SigningMethodRS256, kid, key, claims)
+}
+
+func signIDToken(method jwt.SigningMethod, kid string, key any, claims jwt.Claims) (string, error) {
+	token := jwt.NewWithClaims(method, claims)
+	token.Header["kid"] = kid
 	return token.SignedString(key)
 }
 
-func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes []string) (string, error) {
-	issuer := h.cfg.Security.Issuer
-	if issuer == "" {
-		issuer = fmt.Sprintf("http://localhost:%d", h.cfg.Server.Port)
+func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) jwt.Claims {
+	var ex IDTokenExtra
+	if len(extra) > 0 {
+		ex = extra[0]
+	}
+	now := time.Now()
+	var user *models.User
+	if h.db != nil {
+		user, _ = h.db.GetUser(userID)
+	}
+	mappings := []config.ClaimMapping{}
+	if h.cfg != nil {
+		mappings = h.cfg.OIDC.ClaimMappings
+	}
+	if len(mappings) > 0 {
+		claims := jwt.MapClaims{
+			"iss": h.issuer(),
+			"sub": userID,
+			"aud": clientID,
+			"exp": now.Add(time.Hour).Unix(),
+			"iat": now.Unix(),
+			"nbf": now.Unix(),
+		}
+		if nonce != "" {
+			claims["nonce"] = nonce
+		}
+		if ex.SID != "" {
+			claims["sid"] = ex.SID
+		}
+		if !ex.AuthTime.IsZero() {
+			claims["auth_time"] = ex.AuthTime.Unix()
+		}
+		for key, value := range applyClaimMappings(mappings, user, scopes) {
+			claims[key] = value
+		}
+		return claims
 	}
 
-	now := time.Now()
 	claims := IDTokenClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    issuer,
+			Issuer:    h.issuer(),
 			Subject:   userID,
 			Audience:  jwt.ClaimStrings{clientID},
-			ExpiresAt: jwt.NewNumericDate(now.Add(1 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 		},
 		Sub:   userID,
 		Nonce: nonce,
+		SID:   ex.SID,
 	}
-
-	for _, scope := range scopes {
-		switch scope {
-		case "profile":
-			if user, err := h.db.GetUser(userID); err == nil {
+	if !ex.AuthTime.IsZero() {
+		claims.AuthTime = ex.AuthTime.Unix()
+	}
+	if user != nil {
+		for _, scope := range scopes {
+			switch scope {
+			case "profile":
 				claims.Name = user.Username
 				claims.PreferredUsername = user.Username
-			}
-		case "email":
-			if user, err := h.db.GetUser(userID); err == nil {
+				claims.GivenName = user.GivenName
+				claims.FamilyName = user.FamilyName
+			case "email":
 				claims.Email = user.Email
-				claims.EmailVerified = user.Email != ""
+				claims.EmailVerified = user.EmailVerified
 			}
 		}
 	}
-
-	key, kid := h.keySet.GetECKey()
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	token.Header["kid"] = kid
-
-	return token.SignedString(key)
+	return claims
 }
 
 func (h *Handler) HandleJWKS(w http.ResponseWriter, r *http.Request) {
@@ -259,15 +235,9 @@ func (h *Handler) HandleJWKS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
+	scheme, tokenString := splitAuth(r.Header.Get("Authorization"))
+	if tokenString == "" {
 		writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "Authorization header required")
-		return
-	}
-
-	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-	if tokenString == authHeader {
-		writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "Bearer token required")
 		return
 	}
 
@@ -282,6 +252,10 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.userInfoDPoP(w, r, at, scheme) {
+		return
+	}
+
 	user, err := h.db.GetUser(at.UserID)
 	if err != nil {
 		writeOIDCError(w, http.StatusNotFound, "not_found", "User not found")
@@ -291,28 +265,79 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"sub": user.ID,
 	}
-
-	for _, scope := range at.Scopes {
-		switch scope {
-		case "profile":
-			response["name"] = user.Username
-			response["preferred_username"] = user.Username
-			response["given_name"] = ""
-			response["family_name"] = ""
-			response["picture"] = ""
-			response["locale"] = "en"
-			response["updated_at"] = user.CreatedAt.Unix()
-		case "email":
-			response["email"] = user.Email
-			response["email_verified"] = user.Email != ""
-		case "phone":
-			response["phone_number"] = user.PhoneNumber
-			response["phone_number_verified"] = user.PhoneNumber != ""
+	mappings := []config.ClaimMapping{}
+	if h.cfg != nil {
+		mappings = h.cfg.OIDC.ClaimMappings
+	}
+	if len(mappings) > 0 {
+		for key, value := range applyClaimMappings(mappings, user, at.Scopes) {
+			response[key] = value
+		}
+	} else {
+		for _, scope := range at.Scopes {
+			switch scope {
+			case "profile":
+				response["name"] = user.Username
+				response["preferred_username"] = user.Username
+				response["given_name"] = user.GivenName
+				response["family_name"] = user.FamilyName
+				response["picture"] = ""
+				response["locale"] = "en"
+				response["updated_at"] = user.CreatedAt.Unix()
+			case "email":
+				response["email"] = user.Email
+				response["email_verified"] = user.EmailVerified
+			case "phone":
+				response["phone_number"] = user.PhoneNumber
+				response["phone_number_verified"] = user.PhoneNumber != ""
+			}
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func splitAuth(header string) (string, string) {
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return parts[0], strings.TrimSpace(parts[1])
+}
+
+func (h *Handler) userInfoDPoP(w http.ResponseWriter, r *http.Request, at *models.AccessToken, scheme string) bool {
+	bound := at.TokenType == "DPoP" || at.DPoPJKT != ""
+	if h.db != nil {
+		if client, err := h.db.GetClient(at.ClientID); err == nil && client.DPoPBoundAccessTokens {
+			bound = true
+		}
+	}
+	if bound {
+		if !strings.EqualFold(scheme, "DPoP") {
+			writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "DPoP proof required")
+			return false
+		}
+		if h.checkDPoP == nil {
+			writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "DPoP proof required")
+			return false
+		}
+		proofScheme := "http"
+		if r.TLS != nil {
+			proofScheme = "https"
+		}
+		uri := fmt.Sprintf("%s://%s%s", proofScheme, r.Host, r.URL.Path)
+		if err := h.checkDPoP(r.Header.Get("DPoP"), r.Method, uri, at.Token); err != nil {
+			writeOIDCError(w, http.StatusUnauthorized, "invalid_token", err.Error())
+			return false
+		}
+		return true
+	}
+	if !strings.EqualFold(scheme, "Bearer") {
+		writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "Bearer token required")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
@@ -353,6 +378,9 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"tls_client_certificate_bound_access_tokens":       h.cfg.Security.MTLS.CertBinding,
 		"dpop_signing_alg_values_supported":                []string{"ES256", "RS256"},
 		"authorization_response_iss_parameter_supported":   true,
+		"end_session_endpoint":                             issuer + "/oauth/logout",
+		"backchannel_logout_supported":                     true,
+		"backchannel_logout_session_supported":             true,
 	}
 
 	// Add mTLS endpoint aliases if mTLS is enabled
@@ -371,6 +399,71 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) HandleASMetadata(w http.ResponseWriter, r *http.Request) {
 	h.HandleDiscovery(w, r)
+}
+
+func (h *Handler) issuer() string {
+	if h.cfg.Security.Issuer != "" {
+		return h.cfg.Security.Issuer
+	}
+	return fmt.Sprintf("http://localhost:%d", h.cfg.Server.Port)
+}
+
+func (h *Handler) CreateLogoutToken(clientID, sub, sid string) (string, error) {
+	now := time.Now()
+	jtiRaw := make([]byte, 16)
+	if _, err := rand.Read(jtiRaw); err != nil {
+		return "", err
+	}
+	claims := jwt.MapClaims{
+		"iss": h.issuer(),
+		"aud": clientID,
+		"iat": now.Unix(),
+		"exp": now.Add(2 * time.Minute).Unix(),
+		"jti": hex.EncodeToString(jtiRaw),
+		"events": map[string]any{
+			"http://schemas.openid.net/event/backchannel-logout": map[string]any{},
+		},
+	}
+	if sub != "" {
+		claims["sub"] = sub
+	}
+	if sid != "" {
+		claims["sid"] = sid
+	}
+	key, kid := h.keySet.GetRSAKey()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = kid
+	return token.SignedString(key)
+}
+
+func (h *Handler) ParseSignedToken(token string) (jwt.MapClaims, error) {
+	claims := jwt.MapClaims{}
+	_, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
+		kid, _ := t.Header["kid"].(string)
+		if pub, ok := h.keySet.publicByKid(kid); ok {
+			return pub, nil
+		}
+		switch t.Method.Alg() {
+		case jwt.SigningMethodRS256.Alg():
+			key, _ := h.keySet.GetRSAKey()
+			if key == nil {
+				return nil, fmt.Errorf("no rsa key")
+			}
+			return &key.PublicKey, nil
+		case jwt.SigningMethodES256.Alg():
+			key, _ := h.keySet.GetECKey()
+			if key == nil {
+				return nil, fmt.Errorf("no ec key")
+			}
+			return &key.PublicKey, nil
+		default:
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return claims, nil
 }
 
 func writeOIDCError(w http.ResponseWriter, status int, code, description string) {

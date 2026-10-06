@@ -1,18 +1,28 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Security SecurityConfig `yaml:"security"`
-	Queue    QueueConfig    `yaml:"queue"`
-	OIDC     OIDCConfig     `yaml:"oidc"`
+	Server       ServerConfig       `yaml:"server"`
+	Database     DatabaseConfig     `yaml:"database"`
+	Security     SecurityConfig     `yaml:"security"`
+	Queue        QueueConfig        `yaml:"queue"`
+	OIDC         OIDCConfig         `yaml:"oidc"`
+	Management   ManagementConfig   `yaml:"management"`
+	SMTP         SMTPConfig         `yaml:"smtp"`
+	Branding     BrandingConfig     `yaml:"branding"`
+	Social       SocialConfig       `yaml:"social"`
+	Registration RegistrationConfig `yaml:"registration"`
 }
 
 type ServerConfig struct {
@@ -36,18 +46,92 @@ type DatabaseConfig struct {
 }
 
 type SecurityConfig struct {
-	AccessTokenLifetime       time.Duration `yaml:"access_token_lifetime"`
-	RefreshTokenLifetime      time.Duration `yaml:"refresh_token_lifetime"`
-	AuthorizationCodeLifetime time.Duration `yaml:"authorization_code_lifetime"`
-	DeviceCodeLifetime        time.Duration `yaml:"device_code_lifetime"`
-	CIBARequestLifetime       time.Duration `yaml:"ciba_request_lifetime"`
-	RequestURILifetime        time.Duration `yaml:"request_uri_lifetime"`
-	RequirePKCE               bool          `yaml:"require_pkce"`
-	AllowPlainPKCE            bool          `yaml:"allow_plain_pkce"`
-	Issuer                    string        `yaml:"issuer"`
-	MFA                       MFAConfig     `yaml:"mfa"`
-	MTLS                      MTLSConfig    `yaml:"mtls"`
-	DPoP                      DPoPConfig    `yaml:"dpop"`
+	AccessTokenLifetime       time.Duration       `yaml:"access_token_lifetime"`
+	RefreshTokenLifetime      time.Duration       `yaml:"refresh_token_lifetime"`
+	AuthorizationCodeLifetime time.Duration       `yaml:"authorization_code_lifetime"`
+	DeviceCodeLifetime        time.Duration       `yaml:"device_code_lifetime"`
+	CIBARequestLifetime       time.Duration       `yaml:"ciba_request_lifetime"`
+	RequestURILifetime        time.Duration       `yaml:"request_uri_lifetime"`
+	RequirePKCE               bool                `yaml:"require_pkce"`
+	AllowPlainPKCE            bool                `yaml:"allow_plain_pkce"`
+	AccessTokenFormat         string              `yaml:"access_token_format"`
+	Issuer                    string              `yaml:"issuer"`
+	HashAlgo                  string              `yaml:"hash_algo"`
+	SessionLifetime           time.Duration       `yaml:"session_lifetime"`
+	ResetTokenLifetime        time.Duration       `yaml:"reset_token_lifetime"`
+	TrustedProxies            []string            `yaml:"trusted_proxies"`
+	DisableRegistration       bool                `yaml:"disable_registration"`
+	DisableSocialRegistration bool                `yaml:"disable_social_registration"`
+	AllowInsecureFetch        bool                `yaml:"allow_insecure_fetch"`
+	FetchAllowIPs             []string            `yaml:"fetch_allow_ips"`
+	Password                  PasswordPolicy      `yaml:"password"`
+	BotProtection             BotProtectionConfig `yaml:"bot_protection"`
+	MFA                       MFAConfig           `yaml:"mfa"`
+	MTLS                      MTLSConfig          `yaml:"mtls"`
+	DPoP                      DPoPConfig          `yaml:"dpop"`
+}
+
+type ManagementConfig struct {
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+}
+
+type SMTPConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	Username    string `yaml:"username"`
+	Password    string `yaml:"password"`
+	From        string `yaml:"from"`
+	StartTLS    bool   `yaml:"starttls"`
+	ImplicitTLS bool   `yaml:"implicit_tls"`
+}
+
+// BrandingConfig paints the browser auth pages. ShowRegister and
+// ShowForgotPassword stay nil when the YAML key is missing; Normalize turns
+// that into true so an older config keeps both links.
+type BrandingConfig struct {
+	ProductName        string `yaml:"product_name"`
+	LoginTitle         string `yaml:"login_title"`
+	UsernameLabel      string `yaml:"username_label"`
+	PasswordLabel      string `yaml:"password_label"`
+	SubmitLabel        string `yaml:"submit_label"`
+	AssetsDir          string `yaml:"assets_dir"`
+	LogoFile           string `yaml:"logo_file"`
+	FaviconFile        string `yaml:"favicon_file"`
+	PrimaryColor       string `yaml:"primary_color"`
+	BackgroundColor    string `yaml:"background_color"`
+	TextColor          string `yaml:"text_color"`
+	FooterText         string `yaml:"footer_text"`
+	SupportURL         string `yaml:"support_url"`
+	PrivacyURL         string `yaml:"privacy_url"`
+	TermsURL           string `yaml:"terms_url"`
+	ShowRegister       *bool  `yaml:"show_register"`
+	ShowForgotPassword *bool  `yaml:"show_forgot_password"`
+	Templates          string `yaml:"templates"`
+}
+
+// SocialProvider is one upstream OAuth app. Type is google, github, facebook, oidc, or oauth2.
+type SocialProvider struct {
+	ID                    string   `yaml:"id"`
+	Type                  string   `yaml:"type"`
+	Name                  string   `yaml:"name"`
+	Enabled               bool     `yaml:"enabled"`
+	ClientID              string   `yaml:"client_id"`
+	ClientSecret          string   `yaml:"client_secret"`
+	Scopes                []string `yaml:"scopes"`
+	Issuer                string   `yaml:"issuer"`
+	AuthorizationEndpoint string   `yaml:"authorization_endpoint"`
+	TokenEndpoint         string   `yaml:"token_endpoint"`
+	UserinfoEndpoint      string   `yaml:"userinfo_endpoint"`
+	SubjectField          string   `yaml:"subject_field"`
+	EmailField            string   `yaml:"email_field"`
+	UsernameField         string   `yaml:"username_field"`
+	EmailVerifiedField    string   `yaml:"email_verified_field"`
+}
+
+type SocialConfig struct {
+	Providers []SocialProvider `yaml:"providers"`
 }
 
 type MFAConfig struct {
@@ -65,6 +149,33 @@ type MTLSConfig struct {
 	RequireForToken  bool `yaml:"require_for_token"`
 }
 
+type PasswordPolicy struct {
+	MinLength        int  `yaml:"min_length"`
+	MaxLength        int  `yaml:"max_length"`
+	RequireUppercase bool `yaml:"require_uppercase"`
+	RequireLowercase bool `yaml:"require_lowercase"`
+	RequireNumber    bool `yaml:"require_number"`
+	RequireSymbol    bool `yaml:"require_symbol"`
+	BlockUsername    bool `yaml:"block_username"`
+}
+
+type BotProtectionConfig struct {
+	Provider  string `yaml:"provider"`
+	SiteKey   string `yaml:"site_key"`
+	SecretKey string `yaml:"secret_key"`
+}
+
+type ClaimMapping struct {
+	Claim  string   `yaml:"claim"`
+	Source string   `yaml:"source"`
+	Scopes []string `yaml:"scopes"`
+}
+
+type RegistrationConfig struct {
+	DCREnabled  bool `yaml:"dcr_enabled"`
+	CIMDEnabled bool `yaml:"cimd_enabled"`
+}
+
 type DPoPConfig struct {
 	Enabled       bool `yaml:"enabled"`
 	ProofLifetime int  `yaml:"proof_lifetime"`
@@ -79,12 +190,15 @@ type QueueConfig struct {
 }
 
 type OIDCConfig struct {
-	Issuer               string   `yaml:"issuer"`
-	SigningKey           string   `yaml:"signing_key"`
-	SupportedScopes      []string `yaml:"supported_scopes"`
-	SupportedClaims      []string `yaml:"supported_claims"`
-	SupportedGrantTypes  []string `yaml:"supported_grant_types"`
-	SupportedAuthMethods []string `yaml:"supported_auth_methods"`
+	Issuer               string         `yaml:"issuer"`
+	SigningKey           string         `yaml:"signing_key"`
+	SupportedScopes      []string       `yaml:"supported_scopes"`
+	SupportedClaims      []string       `yaml:"supported_claims"`
+	SupportedGrantTypes  []string       `yaml:"supported_grant_types"`
+	SupportedAuthMethods []string       `yaml:"supported_auth_methods"`
+	ClaimMappings        []ClaimMapping `yaml:"claim_mappings"`
+	KeyRotationInterval  time.Duration  `yaml:"key_rotation_interval"`
+	KeyRetain            time.Duration  `yaml:"key_retain"`
 }
 
 func DefaultConfig() *Config {
@@ -110,7 +224,18 @@ func DefaultConfig() *Config {
 			RequestURILifetime:        60 * time.Second,
 			RequirePKCE:               false,
 			AllowPlainPKCE:            true,
+			AccessTokenFormat:         "opaque",
 			Issuer:                    "http://localhost:8080",
+			HashAlgo:                  "internal/hashalgo/algo.go",
+			SessionLifetime:           8 * time.Hour,
+			ResetTokenLifetime:        30 * time.Minute,
+			DisableRegistration:       false,
+			DisableSocialRegistration: false,
+			Password: PasswordPolicy{
+				MinLength:     8,
+				MaxLength:     128,
+				BlockUsername: true,
+			},
 			MFA: MFAConfig{
 				Enabled:  false,
 				Required: false,
@@ -136,8 +261,17 @@ func DefaultConfig() *Config {
 			PollInterval: 5 * time.Second,
 			MaxPending:   100,
 		},
+		Management: ManagementConfig{},
+		SMTP: SMTPConfig{
+			Port:     587,
+			StartTLS: true,
+		},
+		Branding:     defaultBranding(),
+		Social:       SocialConfig{Providers: []SocialProvider{}},
+		Registration: RegistrationConfig{DCREnabled: true},
 		OIDC: OIDCConfig{
-			Issuer: "http://localhost:8080",
+			Issuer:    "http://localhost:8080",
+			KeyRetain: 48 * time.Hour,
 			SupportedScopes: []string{
 				"openid", "profile", "email", "address", "phone", "offline_access",
 			},
@@ -146,7 +280,7 @@ func DefaultConfig() *Config {
 				"nickname", "preferred_username", "profile", "picture",
 				"website", "email", "email_verified", "gender", "birthdate",
 				"zoneinfo", "locale", "phone_number", "phone_number_verified",
-				"address", "updated_at",
+				"address", "updated_at", "sid",
 			},
 			SupportedGrantTypes: []string{
 				"authorization_code",
@@ -171,20 +305,312 @@ func DefaultConfig() *Config {
 
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
+	if path == "" {
+		cfg.Normalize()
+		return cfg, nil
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
-		return nil, err
+		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	cfg.Normalize()
+	if err := ValidateBranding(cfg); err != nil {
+		return nil, err
+	}
+	if err := ValidateSocial(cfg); err != nil {
+		return nil, err
+	}
+	if err := ValidatePlatform(cfg); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+func defaultBranding() BrandingConfig {
+	showRegister := true
+	showForgot := true
+	return BrandingConfig{
+		ProductName:        "OAuth Server",
+		LoginTitle:         "Sign In",
+		UsernameLabel:      "Username",
+		PasswordLabel:      "Password",
+		SubmitLabel:        "Sign In",
+		PrimaryColor:       "#0066ff",
+		ShowRegister:       &showRegister,
+		ShowForgotPassword: &showForgot,
+	}
+}
+
+// Normalize fills branding copy that was left empty and turns a missing
+// show_register or show_forgot_password key into true.
+func (c *Config) Normalize() {
+	if c == nil {
+		return
+	}
+	b := &c.Branding
+	if b.ProductName == "" {
+		b.ProductName = "OAuth Server"
+	}
+	if b.LoginTitle == "" {
+		b.LoginTitle = "Sign In"
+	}
+	if b.UsernameLabel == "" {
+		b.UsernameLabel = "Username"
+	}
+	if b.PasswordLabel == "" {
+		b.PasswordLabel = "Password"
+	}
+	if b.SubmitLabel == "" {
+		b.SubmitLabel = "Sign In"
+	}
+	if b.PrimaryColor == "" {
+		b.PrimaryColor = "#0066ff"
+	}
+	if b.ShowRegister == nil {
+		v := true
+		b.ShowRegister = &v
+	}
+	if b.ShowForgotPassword == nil {
+		v := true
+		b.ShowForgotPassword = &v
+	}
+}
+
+var brandColorPattern = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+var brandAssetTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".svg":  "image/svg+xml",
+	".ico":  "image/x-icon",
+	".css":  "text/css; charset=utf-8",
+}
+
+// BrandAssetType returns the Content-Type for a branding file name, or ""
+// when the extension is not served.
+func BrandAssetType(name string) string {
+	return brandAssetTypes[strings.ToLower(filepath.Ext(name))]
+}
+
+// MaxBrandAssetBytes is the largest file served from branding.assets_dir.
+const MaxBrandAssetBytes = 1 << 20
+
+// ValidateBranding rejects colors, URLs, file names, and directories that
+// would break the auth pages or escape the asset directory.
+func ValidateBranding(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	b := cfg.Branding
+	if err := checkBrandColor(b.PrimaryColor, "primary_color", true); err != nil {
+		return err
+	}
+	if err := checkBrandColor(b.BackgroundColor, "background_color", false); err != nil {
+		return err
+	}
+	if err := checkBrandColor(b.TextColor, "text_color", false); err != nil {
+		return err
+	}
+	if err := checkBrandURL(b.SupportURL, "support_url"); err != nil {
+		return err
+	}
+	if err := checkBrandURL(b.PrivacyURL, "privacy_url"); err != nil {
+		return err
+	}
+	if err := checkBrandURL(b.TermsURL, "terms_url"); err != nil {
+		return err
+	}
+	if err := checkBrandDir(b.AssetsDir, "assets_dir"); err != nil {
+		return err
+	}
+	if err := checkBrandDir(b.Templates, "templates"); err != nil {
+		return err
+	}
+	if err := checkBrandAssetRef(b.AssetsDir, b.LogoFile, "logo_file"); err != nil {
+		return err
+	}
+	if err := checkBrandAssetRef(b.AssetsDir, b.FaviconFile, "favicon_file"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkBrandColor(value, field string, required bool) error {
+	if value == "" {
+		if required {
+			return fmt.Errorf("branding.%s is required", field)
+		}
+		return nil
+	}
+	if !brandColorPattern.MatchString(value) {
+		return fmt.Errorf("branding.%s must be #rgb or #rrggbb", field)
+	}
+	return nil
+}
+
+func checkBrandURL(raw, field string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("branding.%s must be an absolute http or https URL", field)
+	}
+	return nil
+}
+
+func checkBrandDir(path, field string) error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("branding.%s: %w", field, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("branding.%s is not a directory", field)
+	}
+	return nil
+}
+
+func checkBrandAssetRef(dir, name, field string) error {
+	if name == "" {
+		return nil
+	}
+	if name == "." || name == ".." || name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("branding.%s must be a file name", field)
+	}
+	if BrandAssetType(name) == "" {
+		return fmt.Errorf("branding.%s must be a png, jpg, jpeg, gif, webp, svg, ico, or css file", field)
+	}
+	if dir == "" {
+		return fmt.Errorf("branding.assets_dir is required when %s is set", field)
+	}
+	info, err := os.Stat(filepath.Join(dir, name))
+	if err != nil {
+		return fmt.Errorf("branding.%s: %w", field, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("branding.%s is a directory", field)
+	}
+	if info.Size() > MaxBrandAssetBytes {
+		return fmt.Errorf("branding.%s is larger than 1MiB", field)
+	}
+	return nil
+}
+
+var socialIDPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
+
+var socialTypes = map[string]bool{
+	"google": true, "github": true, "facebook": true, "oidc": true, "oauth2": true,
+}
+
+// ValidateSocial checks provider ids, types, and the endpoints an enabled app needs.
+func ValidateSocial(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	seen := map[string]bool{}
+	for _, p := range cfg.Social.Providers {
+		if !socialIDPattern.MatchString(p.ID) {
+			return fmt.Errorf("social provider id %q must match [a-z0-9_-]+", p.ID)
+		}
+		if seen[p.ID] {
+			return fmt.Errorf("social provider id %q is duplicated", p.ID)
+		}
+		seen[p.ID] = true
+		if !socialTypes[p.Type] {
+			return fmt.Errorf("social provider %q has unknown type %q", p.ID, p.Type)
+		}
+		if !p.Enabled {
+			continue
+		}
+		if p.ClientID == "" || p.ClientSecret == "" {
+			return fmt.Errorf("social provider %q is enabled but client_id and client_secret are required", p.ID)
+		}
+		switch p.Type {
+		case "oidc":
+			if !absoluteHTTP(p.Issuer) {
+				return fmt.Errorf("social provider %q requires an absolute http or https issuer", p.ID)
+			}
+		case "oauth2":
+			if !absoluteHTTP(p.AuthorizationEndpoint) || !absoluteHTTP(p.TokenEndpoint) || !absoluteHTTP(p.UserinfoEndpoint) {
+				return fmt.Errorf("social provider %q requires absolute authorization, token, and userinfo endpoints", p.ID)
+			}
+		}
+		for _, raw := range []string{p.AuthorizationEndpoint, p.TokenEndpoint, p.UserinfoEndpoint} {
+			if raw != "" && !absoluteHTTP(raw) {
+				return fmt.Errorf("social provider %q has an endpoint that is not an absolute http or https URL", p.ID)
+			}
+		}
+	}
+	return nil
+}
+
+var reservedClaims = map[string]bool{
+	"iss": true, "sub": true, "aud": true, "exp": true, "iat": true, "nbf": true,
+	"nonce": true, "sid": true, "auth_time": true,
+}
+
+var claimSources = map[string]bool{
+	"sub": true, "username": true, "email": true, "email_verified": true,
+	"phone": true, "given_name": true, "family_name": true,
+}
+
+// ValidatePlatform checks password bounds, bot protection, and claim mappings.
+func ValidatePlatform(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	p := cfg.Security.Password
+	if p.MinLength < 0 || p.MaxLength < 0 || (p.MaxLength > 0 && p.MinLength > p.MaxLength) {
+		return fmt.Errorf("security.password length bounds are invalid")
+	}
+	switch cfg.Security.AccessTokenFormat {
+	case "", "opaque", "jwt":
+	default:
+		return fmt.Errorf("security.access_token_format must be opaque or jwt")
+	}
+	bot := cfg.Security.BotProtection.Provider
+	switch bot {
+	case "", "recaptcha", "turnstile":
+	default:
+		return fmt.Errorf("security.bot_protection.provider must be recaptcha or turnstile")
+	}
+	if bot != "" && (cfg.Security.BotProtection.SiteKey == "" || cfg.Security.BotProtection.SecretKey == "") {
+		return fmt.Errorf("security.bot_protection requires site_key and secret_key")
+	}
+	for _, m := range cfg.OIDC.ClaimMappings {
+		if m.Claim == "" || reservedClaims[m.Claim] {
+			return fmt.Errorf("oidc claim %q is reserved or empty", m.Claim)
+		}
+		src := m.Source
+		switch {
+		case claimSources[src]:
+		case strings.HasPrefix(src, "const:"):
+		case strings.HasPrefix(src, "attr.") && len(src) > len("attr."):
+		default:
+			return fmt.Errorf("oidc claim %q has unknown source %q", m.Claim, src)
+		}
+	}
+	return nil
+}
+
+func absoluteHTTP(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
 }
 
 func (c *Config) Save(path string) error {

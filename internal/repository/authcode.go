@@ -18,13 +18,18 @@ func NewAuthCodeRepository(db *sql.DB) *AuthCodeRepository {
 func (r *AuthCodeRepository) Save(code *models.AuthorizationCode) error {
 	scopes, _ := json.Marshal(code.Scopes)
 	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, resource, nonce,
-		code_challenge, code_challenge_method, expires_at, used)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		code_challenge, code_challenge_method, family_id, session_id, auth_time, expires_at, used)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+	var authTime any
+	if !code.AuthTime.IsZero() {
+		authTime = code.AuthTime
+	}
 	_, err := r.db.Exec(query,
 		code.Code, code.ClientID, code.UserID, code.RedirectURI,
 		string(scopes), code.Resource, code.Nonce,
 		code.CodeChallenge, code.CodeChallengeMethod,
+		code.FamilyID, code.SessionID, authTime,
 		code.ExpiresAt, code.Used,
 	)
 	return err
@@ -32,17 +37,19 @@ func (r *AuthCodeRepository) Save(code *models.AuthorizationCode) error {
 
 func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error) {
 	query := `SELECT code, client_id, user_id, redirect_uri, scopes, resource, nonce,
-		code_challenge, code_challenge_method, expires_at, used
+		code_challenge, code_challenge_method, COALESCE(family_id, ''), COALESCE(session_id, ''), auth_time, expires_at, used
 		FROM authorization_codes WHERE code = ?`
 
 	ac := &models.AuthorizationCode{}
 	var scopes string
 	var resource, nonce sql.NullString
+	var authTime sql.NullTime
 
 	err := r.db.QueryRow(query, code).Scan(
 		&ac.Code, &ac.ClientID, &ac.UserID, &ac.RedirectURI,
 		&scopes, &resource, &nonce,
 		&ac.CodeChallenge, &ac.CodeChallengeMethod,
+		&ac.FamilyID, &ac.SessionID, &authTime,
 		&ac.ExpiresAt, &ac.Used,
 	)
 	if err != nil {
@@ -54,6 +61,9 @@ func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error)
 	}
 	if nonce.Valid {
 		ac.Nonce = nonce.String
+	}
+	if authTime.Valid {
+		ac.AuthTime = authTime.Time
 	}
 
 	if err := json.Unmarshal([]byte(scopes), &ac.Scopes); err != nil {

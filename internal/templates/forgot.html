@@ -1,0 +1,17 @@
+{{template "head" .}}
+{{template "brand_header" .}}
+    <p class="lede">We will email a reset link if that account exists.</p>
+    {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+    {{if .Status}}<div class="status">{{.Status}}</div>{{end}}
+    <form method="POST" action="/forgot">
+        {{template "csrf_field" .}}
+        <div class="form-group">
+            <label for="username">Username or email</label>
+            <input type="text" id="username" name="username" placeholder="Username or email" required autofocus autocomplete="username">
+        </div>
+        {{template "bot_widget" .}}
+        <button type="submit">Send reset link</button>
+    </form>
+{{template "card_close" .}}
+    <p class="below"><a href="/login">Back to sign in</a></p>
+{{template "brand_footer" .}}

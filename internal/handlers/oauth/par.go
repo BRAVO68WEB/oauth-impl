@@ -148,6 +148,13 @@ func (h *Handler) HandlePAR(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if needsCode && h.cfg != nil && h.cfg.Security.RequirePKCE && codeChallenge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":             "invalid_request",
+			"error_description": "code_challenge is required",
+		})
+		return
+	}
 
 	requestParams := map[string]string{
 		"response_type": responseType,

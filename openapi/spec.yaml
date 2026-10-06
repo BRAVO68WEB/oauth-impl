@@ -37,6 +37,12 @@ tags:
     description: Client-Initiated Backchannel Authentication (CIBA) for decoupled flows
   - name: Device
     description: Device Authorization Grant (RFC 8628) for input-constrained devices
+  - name: CIAM
+    description: Self-service profile, password, session, and activity APIs for a user access token
+  - name: Branding
+    description: Public files for the auth pages
+  - name: Social
+    description: Browser sign-in through an upstream OAuth app
 
 paths:
   # ──────────────────────────────────────────────
@@ -65,6 +71,203 @@ paths:
                     example: ok
               example:
                 status: ok
+
+  /login/social/{provider}:
+    get:
+      tags: [Social]
+      summary: Start social login
+      description: Redirects to the enabled provider. The query string carries the downstream OAuth request.
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the upstream authorization endpoint
+        "404":
+          description: Provider is not enabled
+  /login/social/{provider}/callback:
+    get:
+      tags: [Social]
+      summary: Finish social login
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: query
+          name: code
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+      responses:
+        "302":
+          description: Browser session started
+        "403":
+          description: Social registration is disabled and this provider account is not linked
+
+  /branding/assets/{name}:
+    get:
+      tags: [Branding]
+      summary: Branding asset
+      description: |
+        Serves one file from `branding.assets_dir`. `name` is a single path segment whose extension is png, jpg, jpeg, gif, webp, svg, ico, or css. Files larger than 1 MiB are rejected.
+      operationId: getBrandingAsset
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Asset bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Unknown name, or branding assets are not configured
+        "413":
+          description: File is larger than 1 MiB
+
+  /oauth/logout:
+    get:
+      tags: [OIDC]
+      summary: RP-Initiated Logout
+      description: Ends the browser session. A valid id_token_hint logs out without a prompt. Otherwise the response is a confirmation page.
+      parameters:
+        - in: query
+          name: id_token_hint
+          schema: { type: string }
+        - in: query
+          name: client_id
+          schema: { type: string }
+        - in: query
+          name: post_logout_redirect_uri
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+      responses:
+        "200":
+          description: Logged out, or a confirmation page
+        "302":
+          description: Redirect to a registered post_logout_redirect_uri
+    post:
+      tags: [OIDC]
+      summary: Confirm RP-Initiated Logout
+      responses:
+        "200":
+          description: Logged out
+
+  /api/me:
+    get:
+      tags: [CIAM]
+      summary: Current user profile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Profile for the access token subject
+    patch:
+      tags: [CIAM]
+      summary: Update the current user profile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Updated profile
+
+  /api/account/register:
+    post:
+      tags: [CIAM]
+      summary: Self-service registration
+      description: Returns 403 `registration_disabled` when `security.disable_registration` is true. Management `POST /api/users` is not affected.
+      responses:
+        "201":
+          description: User created. Email is unverified until the confirmation link is used.
+        "403":
+          description: Self-service registration is disabled
+
+  /api/account/password/forgot:
+    post:
+      tags: [CIAM]
+      summary: Request a password reset email
+      responses:
+        "200":
+          description: Accepted. The response is the same when the account does not exist.
+        "503":
+          description: SMTP is not configured
+
+  /api/account/password/reset:
+    post:
+      tags: [CIAM]
+      summary: Set a password with a reset token
+      responses:
+        "200":
+          description: Password updated
+
+  /api/me/login-analytics:
+    get:
+      tags: [CIAM]
+      summary: Login behavior for the current user
+      description: Counts attempts, failure rate, unique IPs, addresses first seen in the window, and daily totals. `window` is a Go duration such as `168h`. The default is `720h`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: window
+          schema: { type: string, example: 168h }
+      responses:
+        "200":
+          description: Login analytics
+
+  /api/analytics/logins:
+    get:
+      tags: [Management]
+      summary: Login behavior across users
+      description: Requires a management client-credentials token. Groups attempts by IP and day.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: window
+          schema: { type: string, example: 720h }
+      responses:
+        "200":
+          description: Login analytics
+
+  /api/webhooks:
+    get:
+      tags: [Management]
+      summary: List webhooks
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Webhook subscriptions
+    post:
+      tags: [Management]
+      summary: Create a webhook
+      description: |
+        `events` chooses which triggers are delivered. Use `["*"]` for every event.
+        Known events include login, login_failed, logout, sso_session_triggered,
+        bruteforce_detected, forgot_password, change_password, password_reset,
+        user_registered, email_verified, and user_disabled.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201":
+          description: Created, including the signing secret
+
+  /api/refresh-tokens:
+    get:
+      tags: [Management]
+      summary: List refresh tokens
+      description: Requires a client-credentials access token with the management scope. Entries use a public id and omit the secret.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Refresh token list
+        "401":
+          description: Missing or invalid token
 
   # ──────────────────────────────────────────────
   # OAuth 2.0 Endpoints
@@ -913,6 +1116,7 @@ paths:
   /api/clients:
     get:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: List all clients
       description: Returns all registered OAuth clients.
       operationId: listClients
@@ -938,6 +1142,7 @@ paths:
                   updated_at: "2026-06-16T10:00:00Z"
     post:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Create a new client
       description: |
         Creates a new OAuth client. Returns the client with generated `id` and `secret`.
@@ -986,6 +1191,7 @@ paths:
   /api/clients/{clientID}:
     get:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Get client by ID
       description: Returns a single client by its ID.
       operationId: getClient
@@ -1015,6 +1221,7 @@ paths:
                 error_description: "Client not found"
     put:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Update client
       description: Updates an existing client. Only provided fields are updated.
       operationId: updateClient
@@ -1046,6 +1253,7 @@ paths:
           description: Client not found
     delete:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Delete client
       description: Permanently deletes a client and all associated tokens.
       operationId: deleteClient
@@ -1068,6 +1276,7 @@ paths:
   /api/users:
     get:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: List all users
       description: Returns all registered users.
       operationId: listUsers
@@ -1088,6 +1297,7 @@ paths:
                   created_at: "2026-06-16T10:00:00Z"
     post:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Create a new user
       description: Creates a new user account with hashed password storage.
       operationId: createUser
@@ -1128,6 +1338,7 @@ paths:
   /api/users/{userID}:
     get:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Get user by ID
       description: Returns a single user by their ID.
       operationId: getUser
@@ -1152,10 +1363,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OAuthError"
+    patch:
+      tags: [Management]
+      summary: Update a user profile or attributes
+      description: Management can set `attributes`. Self-service `PATCH /api/me` cannot.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Updated user
+        "404":
+          description: User not found
 
   /api/tokens:
     get:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: List access tokens
       description: Lists access tokens, optionally filtered by client_id or user_id.
       operationId: listTokens
@@ -1193,6 +1420,7 @@ paths:
   /api/tokens/{token}/revoke:
     post:
       tags: [Management]
+      security: [{ bearerAuth: [] }]
       summary: Revoke a token (admin)
       description: Immediately revokes an access token by its value.
       operationId: revokeTokenAdmin
@@ -1218,6 +1446,7 @@ paths:
   /api/scopes:
     get:
       tags: [Scopes]
+      security: [{ bearerAuth: [] }]
       summary: List all scopes
       description: Returns all registered custom scopes.
       operationId: listScopes
@@ -1243,6 +1472,7 @@ paths:
                   created_at: "2026-06-16T10:00:00Z"
     post:
       tags: [Scopes]
+      security: [{ bearerAuth: [] }]
       summary: Create a new scope
       description: Registers a new custom scope that can be assigned to clients and resources.
       operationId: createScope
@@ -1280,6 +1510,7 @@ paths:
   /api/scopes/{name}:
     get:
       tags: [Scopes]
+      security: [{ bearerAuth: [] }]
       summary: Get scope by name
       description: Returns a single scope by its name.
       operationId: getScope
@@ -1306,6 +1537,7 @@ paths:
                 $ref: "#/components/schemas/OAuthError"
     delete:
       tags: [Scopes]
+      security: [{ bearerAuth: [] }]
       summary: Delete a scope
       description: Permanently deletes a scope definition.
       operationId: deleteScope
@@ -1332,6 +1564,7 @@ paths:
   /api/resources:
     get:
       tags: [Resources]
+      security: [{ bearerAuth: [] }]
       summary: List all resource servers
       description: Returns all registered resource servers.
       operationId: listResources
@@ -1352,6 +1585,7 @@ paths:
                   created_at: "2026-06-16T10:00:00Z"
     post:
       tags: [Resources]
+      security: [{ bearerAuth: [] }]
       summary: Register a resource server
       description: Registers a new resource server with its allowed scopes (RFC 8707).
       operationId: createResource
@@ -1389,6 +1623,7 @@ paths:
   /api/resources/{uri}:
     get:
       tags: [Resources]
+      security: [{ bearerAuth: [] }]
       summary: Get resource server by URI
       description: Returns a single resource server by its URI.
       operationId: getResource
@@ -1415,6 +1650,7 @@ paths:
                 $ref: "#/components/schemas/OAuthError"
     put:
       tags: [Resources]
+      security: [{ bearerAuth: [] }]
       summary: Update resource server
       description: Updates an existing resource server's metadata and scopes.
       operationId: updateResource
@@ -1447,6 +1683,7 @@ paths:
           description: Resource not found
     delete:
       tags: [Resources]
+      security: [{ bearerAuth: [] }]
       summary: Delete resource server
       description: Permanently deletes a resource server.
       operationId: deleteResource
@@ -1469,6 +1706,7 @@ paths:
   /api/resources/{uri}/scopes:
     get:
       tags: [Resources]
+      security: [{ bearerAuth: [] }]
       summary: List scopes for a resource
       description: Returns all scopes associated with a specific resource server.
       operationId: listResourceScopes
@@ -1497,6 +1735,7 @@ paths:
   /api/consents:
     get:
       tags: [Consents]
+      security: [{ bearerAuth: [] }]
       summary: List consents for a user
       description: Returns all consents granted by a specific user.
       operationId: listConsents
@@ -1531,6 +1770,7 @@ paths:
                 $ref: "#/components/schemas/OAuthError"
     delete:
       tags: [Consents]
+      security: [{ bearerAuth: [] }]
       summary: Revoke a consent
       description: Revokes a user's consent for a specific client.
       operationId: revokeConsent
@@ -1570,6 +1810,7 @@ paths:
   /api/ciba/pending:
     get:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: List pending CIBA requests
       description: Returns all CIBA requests with status "pending" that haven't expired.
       operationId: listPendingCIBA
@@ -1595,6 +1836,7 @@ paths:
   /api/ciba/{authReqID}/approve:
     post:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: Approve CIBA request
       description: Approves a pending CIBA request, allowing the client to obtain tokens.
       operationId: approveCIBA
@@ -1628,6 +1870,7 @@ paths:
   /api/ciba/{authReqID}/deny:
     post:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: Deny CIBA request
       description: Denies a pending CIBA request. The client will receive an "access_denied" error.
       operationId: denyCIBA
@@ -1719,6 +1962,7 @@ paths:
   /ciba/pending:
     get:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: List pending CIBA requests (mobile)
       description: Returns pending CIBA requests for the mobile polling CLI.
       operationId: cibaPending
@@ -1735,6 +1979,7 @@ paths:
   /ciba/poll:
     get:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: Long-poll for CIBA requests
       description: |
         Long-polls for the next pending CIBA request. Blocks for up to 30 seconds
@@ -1761,6 +2006,7 @@ paths:
   /ciba/approve:
     post:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: Approve CIBA request (mobile)
       description: Approves a CIBA request from the mobile polling CLI.
       operationId: cibaApprove
@@ -1789,6 +2035,7 @@ paths:
   /ciba/deny:
     post:
       tags: [CIBA]
+      security: [{ bearerAuth: [] }]
       summary: Deny CIBA request (mobile)
       description: Denies a CIBA request from the mobile polling CLI.
       operationId: cibaDeny
@@ -1818,13 +2065,334 @@ paths:
 # Components
 # ──────────────────────────────────────────────
 
+  /api/account/email/verify:
+    post:
+      tags: [CIAM]
+      summary: Confirm an email address with a token
+      responses:
+        "200":
+          description: Email confirmed
+        "400":
+          description: Token is missing or expired
+
+  /api/me/password:
+    post:
+      tags: [CIAM]
+      summary: Change the current user's password
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Password updated
+        "400":
+          description: Current password is wrong or the new password fails complexity (`invalid_password`)
+
+  /api/me/email/send:
+    post:
+      tags: [CIAM]
+      summary: Send another email confirmation
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Confirmation email accepted
+        "503":
+          description: SMTP is not configured
+
+  /api/me/sessions:
+    get:
+      tags: [CIAM]
+      summary: List the current user's browser sessions
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Sessions
+
+  /api/me/sessions/{sid}:
+    delete:
+      tags: [CIAM]
+      summary: Revoke one browser session
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Session revoked
+        "404":
+          description: Session not found
+
+  /api/me/refresh-tokens:
+    get:
+      tags: [CIAM]
+      summary: List the current user's refresh tokens
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Refresh tokens, without the secret
+
+  /api/me/refresh-tokens/{id}:
+    delete:
+      tags: [CIAM]
+      summary: Revoke one refresh token
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Refresh token revoked
+
+  /api/me/activity:
+    get:
+      tags: [CIAM]
+      summary: Recent login activity for the current user
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Login events
+
+  /api/users/{userID}/password:
+    post:
+      tags: [Management]
+      summary: Set a user's password
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Password updated
+        "400":
+          description: Password fails complexity (`invalid_password`)
+
+  /api/users/{userID}/sessions:
+    get:
+      tags: [Management]
+      summary: List a user's browser sessions
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Sessions
+
+  /api/users/{userID}/sessions/{sid}:
+    delete:
+      tags: [Management]
+      summary: Revoke a user's browser session
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Session revoked
+
+  /api/users/{userID}/activity:
+    get:
+      tags: [Management]
+      summary: Login activity for one user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Login events
+
+  /api/users/{userID}/login-analytics:
+    get:
+      tags: [Management]
+      summary: Login analytics for one user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+        - name: window
+          in: query
+          schema: { type: string, example: 720h }
+      responses:
+        "200":
+          description: Login analytics
+
+  /api/users/{userID}/mfa/enable:
+    post:
+      tags: [Management]
+      summary: Start TOTP enrollment for a user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Enrollment secret
+
+  /api/users/{userID}/mfa/verify:
+    post:
+      tags: [Management]
+      summary: Confirm a TOTP code for a user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: MFA enabled
+
+  /api/users/{userID}/mfa/status:
+    get:
+      tags: [Management]
+      summary: Read MFA status for a user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: MFA status
+
+  /api/users/{userID}/mfa/disable:
+    post:
+      tags: [Management]
+      summary: Disable MFA for a user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: MFA disabled
+
+  /api/webhooks/{id}:
+    get:
+      tags: [Management]
+      summary: Get one webhook
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Webhook
+    patch:
+      tags: [Management]
+      summary: Update a webhook
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Updated webhook
+    delete:
+      tags: [Management]
+      summary: Delete a webhook
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+
+  /api/webhooks/{id}/test:
+    post:
+      tags: [Management]
+      summary: Send a test webhook
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Delivered
+
+  /api/refresh-tokens/{id}/revoke:
+    post:
+      tags: [Management]
+      summary: Revoke a refresh token by id
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Revoked
+
+  /api/audit:
+    get:
+      tags: [Management]
+      summary: List audit log rows
+      description: Requires a management client-credentials token. `window` uses the same duration rules as login analytics. Metadata omits passwords, tokens, reset links, client secrets, and captcha secrets.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, example: 720h }
+        - name: action
+          in: query
+          schema: { type: string, example: client.create }
+        - name: actor_id
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Audit rows
+        "403":
+          description: A user token cannot read the audit log
+
+  /api/keys/rotate:
+    post:
+      tags: [Management]
+      summary: Rotate signing keys
+      description: Creates a new active RSA key and a new active EC key. The previous keys stay in JWKS until `retire_at`. Private key material is not returned.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Public key ids now published
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
-      description: OAuth 2.0 access token
+      description: Opaque OAuth 2.0 access token. Management routes require a client-credentials token whose scope contains management.
     basicAuth:
       type: http
       scheme: basic
@@ -1875,7 +2443,7 @@ components:
           example: "client_secret_basic"
         dpop_bound_access_tokens:
           type: boolean
-          description: Whether the client always uses DPoP for token requests
+          description: Forced DPoP for this OAuth app. When true, every token grant, UserInfo call, and revocation of a bound token requires a DPoP proof, even if security.dpop.enabled is false.
           example: false
         require_pushed_authorization_requests:
           type: boolean
@@ -2113,7 +2681,7 @@ components:
         password:
           type: string
           format: password
-          description: User password (stored as bcrypt hash)
+          description: User password (stored with the hasher in internal/hashalgo/algo.go)
           example: "secureP@ss123"
         email:
           type: string

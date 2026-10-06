@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/oidc"
 	"github.com/bravo68web/oauth-impl/internal/queue"
+	"github.com/bravo68web/oauth-impl/internal/service"
 	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
 
@@ -185,9 +188,8 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.clientRepo.GetByID(dc.ClientID)
-	if err != nil {
-		writeTokenError(w, http.StatusBadRequest, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, dc.ClientID, "", http.StatusBadRequest)
+	if !ok {
 		return
 	}
 
@@ -215,7 +217,21 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := crypto.GenerateToken()
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
+	}
+	tokenType := boundTokenType(client)
+
+	userID := dc.UserID
+	if userID == "" {
+		queueReq, qerr := h.q.GetByID(deviceCode)
+		if qerr == nil && queueReq.UserID != "" {
+			userID = queueReq.UserID
+		}
+	}
+
+	accessToken, err := h.issueAccessToken(dc.ClientID, userID, strings.Join(dc.Scopes, " "), tokenType)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -227,18 +243,13 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID string
-	queueReq, err := h.q.GetByID(deviceCode)
-	if err == nil && queueReq.UserID != "" {
-		userID = queueReq.UserID
-	}
-
 	accessTok := &models.AccessToken{
 		Token:     accessToken,
 		ClientID:  dc.ClientID,
 		UserID:    userID,
 		Scopes:    dc.Scopes,
-		TokenType: "Bearer",
+		TokenType: tokenType,
+		DPoPJKT:   dpopJKT,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -261,82 +272,124 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeTokenResponse(w, accessToken, refreshToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), "Bearer", strings.Join(dc.Scopes, " "))
+	if containsScope(dc.Scopes, "openid") && h.oidcHandler != nil {
+		idToken, err := h.oidcHandler.CreateIDToken(dc.ClientID, userID, "", dc.Scopes, oidc.IDTokenExtra{SID: dc.SessionID, AuthTime: dc.AuthTime})
+		if err != nil {
+			writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to create ID token")
+			return
+		}
+		writeOIDCTokenResponse(w, accessToken, refreshToken, idToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), tokenType, strings.Join(dc.Scopes, " "))
+		return
+	}
+	writeTokenResponse(w, accessToken, refreshToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), tokenType, strings.Join(dc.Scopes, " "))
 }
 
 func (h *Handler) HandleDeviceVerification(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head><title>Device Authorization</title></head>
-<body>
-<h1>Device Authorization</h1>
-<form method="POST" action="/device">
-	<label for="user_code">Enter the code shown on your device:</label><br>
-	<input type="text" id="user_code" name="user_code" required><br><br>
-	<button type="submit">Submit</button>
-</form>
-</body>
-</html>`)
+	if err := r.ParseForm(); err != nil && r.Method == http.MethodPost {
+		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
-	if err := r.ParseForm(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "invalid_request",
+	if r.Method == http.MethodPost && !service.CSRFMatch(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error":             "csrf_failed",
+			"error_description": "CSRF token is missing or invalid",
 		})
 		return
 	}
-
 	userCode := r.Form.Get("user_code")
 	if userCode == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":             "invalid_request",
-			"error_description": "user_code is required",
-		})
+		userCode = r.URL.Query().Get("user_code")
+	}
+	session := h.getSession(r)
+	if session == nil || !session.Authenticated || (h.cfg.Security.MFA.Required && !session.MFAVerified) {
+		next := "/device"
+		if userCode != "" {
+			next = "/device?user_code=" + url.QueryEscape(userCode)
+		}
+		target := "/login?next=" + url.QueryEscape(next)
+		if session != nil && h.cfg.Security.MFA.Required && !session.MFAVerified {
+			target = "/login/mfa?next=" + url.QueryEscape(next)
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 		return
 	}
 
+	if userCode == "" {
+		msg := ""
+		if r.Method == http.MethodPost {
+			msg = "Enter the code shown on your device."
+		}
+		h.renderDevice(w, r, "", msg, "", nil)
+		return
+	}
 	dc, err := h.deviceRepo.GetByUserCode(userCode)
+	if err != nil || time.Now().After(dc.ExpiresAt) || dc.Status == "expired" {
+		h.renderDevice(w, r, userCode, "That code is invalid or has expired.", "", nil)
+		return
+	}
+	client, err := h.clientRepo.GetByID(dc.ClientID)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":             "invalid_grant",
-			"error_description": "Invalid user code",
-		})
+		h.renderDevice(w, r, userCode, "The application for this code is no longer registered.", "", nil)
 		return
 	}
-
-	if time.Now().After(dc.ExpiresAt) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":             "expired_token",
-			"error_description": "User code expired",
-		})
+	if r.Method == http.MethodGet || r.Form.Get("action") == "" {
+		h.renderDevice(w, r, userCode, "", client.Name, dc.Scopes)
 		return
 	}
-
-	userID := r.Form.Get("user_id")
-
-	if err := h.deviceRepo.UpdateStatus(dc.DeviceCode, "approved"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error":             "server_error",
-			"error_description": "Failed to update device code",
-		})
+	if r.Form.Get("action") == "deny" {
+		_ = h.deviceRepo.UpdateStatus(dc.DeviceCode, "denied")
+		_ = h.q.Deny(dc.DeviceCode, "User denied the request")
+		h.renderDeviceDone(w, false)
 		return
 	}
+	if err := h.deviceRepo.Approve(dc.DeviceCode, session.UserID, session.ID, session.AuthTime); err != nil {
+		h.renderDevice(w, r, userCode, "Could not approve the device.", client.Name, dc.Scopes)
+		return
+	}
+	_ = h.q.Approve(dc.DeviceCode, session.UserID)
+	if h.sessions != nil {
+		_ = h.sessions.RecordClient(session.ID, dc.ClientID)
+	}
+	h.renderDeviceDone(w, true)
+}
 
-	_ = h.q.Approve(dc.DeviceCode, userID)
+func (h *Handler) renderDevice(w http.ResponseWriter, r *http.Request, userCode, errMsg, clientName string, scopes []string) {
+	data := map[string]any{
+		"Error":      errMsg,
+		"UserCode":   userCode,
+		"ClientName": clientName,
+		"Scopes":     scopes,
+		"Confirm":    clientName != "",
+		"Done":       false,
+		"Approved":   false,
+		"CSRFToken":  service.IssueCSRF(w, r, h.cfg != nil && h.cfg.Server.TLS.Enabled),
+	}
+	h.brandTheme.Apply(data, "Device Authorization", "Device authorization", clientName)
+	if h.pages != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := h.pages.ExecuteTemplate(w, "device.html", data); err == nil {
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><h1>Device authorization</h1><p>%s</p>
+<form method="POST" action="/device"><input type="hidden" name="csrf_token" value="%s"><input name="user_code" value="%s"><button name="action" value="approve">Approve</button><button name="action" value="deny">Deny</button></form></body></html>`,
+		templateEscape(errMsg), templateEscape(data["CSRFToken"].(string)), templateEscape(userCode))
+}
 
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head><title>Authorization Approved</title></head>
-<body>
-<h1>Authorization Approved</h1>
-<p>You have successfully authorized the device.</p>
-<p>You can now return to your device.</p>
-</body>
-</html>`)
+func (h *Handler) renderDeviceDone(w http.ResponseWriter, approved bool) {
+	data := map[string]any{"Done": true, "Approved": approved, "Error": "", "Confirm": false}
+	h.brandTheme.Apply(data, "Device Authorization", "Device authorization", "")
+	if h.pages != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := h.pages.ExecuteTemplate(w, "device.html", data); err == nil {
+			return
+		}
+	}
+	msg := "Authorization approved. Return to your device."
+	if !approved {
+		msg = "Authorization denied."
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><h1>%s</h1></body></html>`, templateEscape(msg))
 }

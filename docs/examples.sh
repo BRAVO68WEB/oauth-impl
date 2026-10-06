@@ -32,7 +32,13 @@ echo ""
 
 echo -e "${BLUE}2. Create User${NC}"
 echo "------------"
+echo "Set MGMT_TOKEN to a client-credentials access token with the management scope."
+if [ -z "$MGMT_TOKEN" ]; then
+  echo "MGMT_TOKEN is empty; skipping user creation."
+  USER_ID=""
+else
 USER=$(curl -s -X POST "$SERVER/api/users" \
+  -H "Authorization: Bearer $MGMT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "testuser",
@@ -42,6 +48,7 @@ USER=$(curl -s -X POST "$SERVER/api/users" \
 
 USER_ID=$(echo $USER | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
 echo "User ID: $USER_ID"
+fi
 echo ""
 
 echo -e "${BLUE}3. Client Credentials Flow${NC}"

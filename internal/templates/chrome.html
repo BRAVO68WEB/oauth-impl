@@ -1,0 +1,263 @@
+{{define "head"}}<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Brand.PageTitle}} - {{.Brand.ProductName}}</title>
+    {{if .Brand.FaviconURL}}<link rel="icon" href="{{.Brand.FaviconURL}}">{{end}}
+    <style>
+        :root {
+            --brand-primary: {{.Brand.PrimaryColor}};
+            --ink: #1c1917;
+            --muted: #57534e;
+            --line: #e7e5e4;
+            --canvas: #f4f4f5;
+            --card: #ffffff;
+            --danger: #9f1239;
+            --danger-bg: #fff1f2;
+            --ok: #166534;
+            --ok-bg: #f0fdf4;
+            {{if .Brand.BackgroundColor}}--canvas: {{.Brand.BackgroundColor}};{{end}}
+            {{if .Brand.TextColor}}--ink: {{.Brand.TextColor}};{{end}}
+        }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; min-height: 100%; }
+        body {
+            font-family: "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif;
+            font-size: 16px;
+            line-height: 1.5;
+            color: var(--ink);
+            background: var(--canvas);
+            caret-color: var(--brand-primary);
+        }
+        ::selection { background: color-mix(in srgb, var(--brand-primary) 22%, white); }
+        .stage {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 48px 20px 40px;
+        }
+        .lockup {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 28px;
+            color: var(--ink);
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1.35rem;
+            letter-spacing: -0.03em;
+        }
+        .mark { color: var(--brand-primary); display: flex; }
+        .logo { display: block; max-width: 36px; max-height: 36px; }
+        .card {
+            width: min(100%, 420px);
+            min-width: 0;
+            background: var(--card);
+            border-radius: 16px;
+            padding: 36px 32px 32px;
+            box-shadow: 0 18px 50px rgba(28, 25, 23, 0.08), 0 2px 8px rgba(28, 25, 23, 0.04);
+            animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes rise {
+            from { transform: translateY(10px); }
+            to { transform: translateY(0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .card { animation: none; }
+        }
+        h1 {
+            margin: 0 0 22px;
+            text-align: center;
+            font-size: 1.75rem;
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            line-height: 1.35;
+        }
+        .lede, .info {
+            color: var(--muted);
+            text-align: center;
+            margin: -8px 0 20px;
+            font-size: 0.95rem;
+        }
+        .form-group { margin-bottom: 14px; }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+        input[type="text"], input[type="password"], input[type="email"] {
+            width: 100%;
+            height: 46px;
+            padding: 0 14px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fff;
+            color: var(--ink);
+            font: inherit;
+            outline: none;
+        }
+        input::placeholder { color: #78716c; }
+        input:focus-visible {
+            border-color: var(--brand-primary);
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-primary) 18%, transparent);
+        }
+        input.code { font-size: 1.35rem; text-align: center; letter-spacing: 0.4em; }
+        input.device-code { letter-spacing: 0.18em; text-align: center; font-weight: 600; }
+        button {
+            width: 100%;
+            height: 46px;
+            margin-top: 6px;
+            padding: 0 16px;
+            background: var(--brand-primary);
+            color: #fff;
+            border: 0;
+            border-radius: 8px;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        button:hover { filter: brightness(0.94); }
+        button:focus-visible { outline: 3px solid color-mix(in srgb, var(--brand-primary) 45%, white); outline-offset: 2px; }
+        .actions { display: flex; gap: 10px; }
+        .actions button { width: auto; flex: 1; }
+        .deny, .btn-deny { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+        .deny:hover, .btn-deny:hover { filter: none; background: #fafaf9; }
+        .error, .status {
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 16px;
+            font-size: 0.92rem;
+            text-align: center;
+        }
+        .error { color: var(--danger); background: var(--danger-bg); }
+        .status { color: var(--ok); background: var(--ok-bg); }
+        .or {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 18px 0 12px;
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+        .or::before, .or::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+        .social a {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 44px;
+            margin-top: 8px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            color: var(--ink);
+            text-decoration: none;
+            font-weight: 600;
+            background: #fff;
+        }
+        .social a:hover { background: #fafaf9; }
+        .below {
+            width: min(100%, 420px);
+            margin-top: 22px;
+            text-align: center;
+            color: var(--ink);
+            font-size: 0.95rem;
+        }
+        .below a, .hint a, .links a, a { color: var(--brand-primary); text-decoration: none; font-weight: 600; }
+        a:hover { text-decoration: underline; text-underline-offset: 3px; }
+        .hint { text-align: right; margin: -4px 0 8px; font-size: 0.85rem; max-width: 100%; }
+        .below, .lockup, .brand-footer { max-width: min(100%, 420px); }
+        .hint a { font-weight: 600; }
+        .scope-list { background: #fafaf9; border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; }
+        .scope-list h3 { margin: 0 0 8px; font-size: 0.82rem; letter-spacing: 0.01em; }
+        .scope-item { margin: 6px 0; font-size: 0.95rem; }
+        .buttons { display: flex; gap: 10px; }
+        .buttons button { width: auto; flex: 1; margin-top: 0; }
+        .qr-code { text-align: center; margin: 8px 0 16px; }
+        .qr-code img { border-radius: 12px; background: #fff; }
+        .secret-box { background: #fafaf9; padding: 12px; border-radius: 8px; font-family: ui-monospace, monospace; font-size: 0.95rem; word-break: break-all; margin: 12px 0; }
+        .toggle-secret { color: var(--brand-primary); cursor: pointer; font-size: 0.9rem; font-weight: 600; }
+        .hidden { display: none; }
+        ul { margin: 8px 0 16px; padding-left: 18px; }
+        .brand-footer { width: min(100%, 420px); margin-top: 18px; color: var(--muted); font-size: 0.82rem; text-align: center; }
+        .brand-footer a { margin: 0 8px; font-weight: 600; }
+        @media (max-width: 520px) {
+            .stage { padding: 32px 16px; justify-content: flex-start; }
+            .card { padding: 28px 20px 24px; }
+        }
+    </style>
+    {{if .Brand.CustomCSS}}<link rel="stylesheet" href="/branding/assets/custom.css">{{end}}
+</head>
+<body>
+<main class="stage">
+    <a class="lockup" href="/login">
+        {{if .Brand.LogoURL}}<img class="logo" src="{{.Brand.LogoURL}}" alt="">{{else}}<span class="mark" aria-hidden="true"><svg viewBox="0 0 28 28" width="28" height="28"><rect x="4" y="3" width="20" height="5.2" rx="1.4" fill="currentColor"/><rect x="4" y="11.4" width="20" height="5.2" rx="1.4" fill="currentColor" opacity="0.72"/><rect x="4" y="19.8" width="20" height="5.2" rx="1.4" fill="currentColor" opacity="0.45"/></svg></span>{{end}}
+        <span>{{.Brand.ProductName}}</span>
+    </a>
+    <section class="card">
+{{end}}
+
+{{define "brand_header"}}
+    <h1>{{.Brand.Heading}}</h1>
+{{end}}
+
+{{define "card_close"}}
+    </section>
+{{end}}
+
+{{define "brand_footer"}}
+    {{if or .Brand.FooterText .Brand.SupportURL .Brand.PrivacyURL .Brand.TermsURL}}
+    <footer class="brand-footer">
+        {{if .Brand.FooterText}}<p>{{.Brand.FooterText}}</p>{{end}}
+        {{if or .Brand.SupportURL .Brand.PrivacyURL .Brand.TermsURL}}
+        <p>
+            {{if .Brand.SupportURL}}<a href="{{.Brand.SupportURL}}">Support</a>{{end}}
+            {{if .Brand.PrivacyURL}}<a href="{{.Brand.PrivacyURL}}">Privacy</a>{{end}}
+            {{if .Brand.TermsURL}}<a href="{{.Brand.TermsURL}}">Terms</a>{{end}}
+        </p>
+        {{end}}
+    </footer>
+    {{end}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "csrf_field"}}
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+{{end}}
+
+{{define "bot_widget"}}
+{{if eq .BotProvider "recaptcha"}}
+        <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+        <div class="g-recaptcha" data-sitekey="{{.BotSiteKey}}" data-callback="oauthBot"></div>
+        <input type="hidden" name="bot_token" id="bot_token">
+        <script>function oauthBot(token){var field=document.getElementById("bot_token"); if(field){field.value=token}}</script>
+{{else if eq .BotProvider "turnstile"}}
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+        <div class="cf-turnstile" data-sitekey="{{.BotSiteKey}}" data-callback="oauthBot"></div>
+        <input type="hidden" name="bot_token" id="bot_token">
+        <script>function oauthBot(token){var field=document.getElementById("bot_token"); if(field){field.value=token}}</script>
+{{end}}
+{{end}}
+
+{{define "oauth_fields"}}
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="client_id" value="{{.ClientID}}">
+        <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+        <input type="hidden" name="response_type" value="{{.ResponseType}}">
+        <input type="hidden" name="scope" value="{{.Scope}}">
+        <input type="hidden" name="state" value="{{.State}}">
+        <input type="hidden" name="nonce" value="{{.Nonce}}">
+        <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
+        <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
+        <input type="hidden" name="request_uri" value="{{.RequestURI}}">
+        <input type="hidden" name="prompt" value="{{.Prompt}}">
+        <input type="hidden" name="login_hint" value="{{.LoginHint}}">
+        <input type="hidden" name="resource" value="{{.Resource}}">
+        <input type="hidden" name="next" value="{{.Next}}">
+{{end}}

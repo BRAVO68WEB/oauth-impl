@@ -1,0 +1,14 @@
+{
+  "name": "oauth-impl-e2e",
+  "private": true,
+  "scripts": {
+    "test": "mocha"
+  },
+  "dependencies": {
+    "jose": "^5.9.6",
+    "mocha": "^10.8.2",
+    "otpauth": "^9.3.6",
+    "playwright": "^1.49.1",
+    "selfsigned": "^2.4.1"
+  }
+}

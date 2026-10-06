@@ -3,16 +3,16 @@ package oauth
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
+	"github.com/bravo68web/oauth-impl/internal/branding"
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
@@ -37,15 +37,28 @@ type Handler struct {
 	cfg          *config.Config
 	q            *queue.MemoryQueue
 	oidcHandler  *oidc.Handler
-	sessions     map[string]*Session
-	mu           sync.RWMutex
+	userSvc      *service.UserService
+	sessions     *service.SessionService
+	logout       *service.LogoutService
+	logins       LoginRecorder
+	pages        *template.Template
+	hooks        *service.WebhookDispatcher
+	brandTheme   branding.Theme
+	audit        *service.AuditLog
+	cimd         *cimdCache
+}
+
+type LoginRecorder interface {
+	Record(user *models.User, r *http.Request, success, mfa bool)
 }
 
 type Session struct {
+	ID            string
 	UserID        string
 	Username      string
 	Authenticated bool
 	MFAVerified   bool
+	AuthTime      time.Time
 }
 
 func NewHandler(
@@ -63,6 +76,10 @@ func NewHandler(
 	cfg *config.Config,
 	q *queue.MemoryQueue,
 	oidcHandler *oidc.Handler,
+	userSvc *service.UserService,
+	sessions *service.SessionService,
+	logout *service.LogoutService,
+	logins LoginRecorder,
 ) *Handler {
 	return &Handler{
 		clientRepo:   clientRepo,
@@ -79,8 +96,32 @@ func NewHandler(
 		cfg:          cfg,
 		q:            q,
 		oidcHandler:  oidcHandler,
-		sessions:     make(map[string]*Session),
+		userSvc:      userSvc,
+		sessions:     sessions,
+		logout:       logout,
+		logins:       logins,
+		brandTheme:   branding.Prepare(cfg),
+		cimd:         newCIMDCache(),
 	}
+}
+
+func (h *Handler) ClientName(id string) string {
+	if h == nil || h.clientRepo == nil || id == "" {
+		return ""
+	}
+	client, err := h.clientRepo.GetByID(id)
+	if err != nil || client == nil {
+		return ""
+	}
+	return client.Name
+}
+
+func (h *Handler) SetTemplates(t *template.Template) {
+	h.pages = t
+}
+
+func (h *Handler) SetWebhooks(d *service.WebhookDispatcher) {
+	h.hooks = d
 }
 
 var validResponseTypes = map[string]bool{
@@ -126,8 +167,8 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if clientID != "" {
-			client, err := h.clientRepo.GetByID(clientID)
-			if err == nil && h.jarSvc != nil {
+			client, code, _ := h.resolveClient(clientID, redirectURI)
+			if code == "" && client != nil && h.jarSvc != nil {
 				claims, err := h.jarSvc.ValidateRequestObject(request, client)
 				if err != nil {
 					writeOAuthError(w, http.StatusBadRequest, "invalid_request_object", "Invalid request JWT: "+err.Error(), "")
@@ -231,9 +272,9 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.clientRepo.GetByID(clientID)
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_client", "Client not found", "")
+	client, code, desc := h.resolveClient(clientID, redirectURI)
+	if code != "" {
+		writeOAuthError(w, http.StatusBadRequest, code, desc, state)
 		return
 	}
 
@@ -270,6 +311,10 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "Only S256 and plain code_challenge_method are supported", state)
 			return
 		}
+	}
+	if needsCode && h.cfg != nil && h.cfg.Security.RequirePKCE && codeChallenge == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code_challenge is required", state)
+		return
 	}
 
 	// Nonce is required for implicit/hybrid flows (response_type contains id_token)
@@ -354,6 +399,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
+		familyID := uuid.New().String()
 		authCode := &models.AuthorizationCode{
 			Code:                code,
 			ClientID:            client.ID,
@@ -364,6 +410,9 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 			Nonce:               nonce,
 			CodeChallenge:       codeChallenge,
 			CodeChallengeMethod: codeChallengeMethod,
+			FamilyID:            familyID,
+			SessionID:           session.ID,
+			AuthTime:            session.AuthTime,
 			ExpiresAt:           time.Now().Add(h.cfg.Security.AuthorizationCodeLifetime),
 			Used:                false,
 		}
@@ -375,7 +424,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 	}
 
 	if needsToken {
-		accessToken, err = crypto.GenerateToken()
+		accessToken, err = h.issueAccessToken(client.ID, session.UserID, scope, "Bearer")
 		if err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token", state)
 			return
@@ -397,8 +446,31 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	if h.sessions != nil && session.ID != "" {
+		prior, _ := h.sessions.Clients(session.ID)
+		_ = h.sessions.RecordClient(session.ID, client.ID)
+		prompt := r.URL.Query().Get("prompt")
+		if prompt == "" && r.Form != nil {
+			prompt = r.Form.Get("prompt")
+		}
+		crossClient := false
+		for _, id := range prior {
+			if id != "" && id != client.ID {
+				crossClient = true
+				break
+			}
+		}
+		if h.hooks != nil && (crossClient || prompt == "none") {
+			h.hooks.Emit(service.EventSSOSession, map[string]any{
+				"user_id": session.UserID, "username": session.Username,
+				"session_id": session.ID, "client_id": client.ID,
+				"prompt": prompt, "scope": scope,
+			})
+		}
+	}
+
 	if needsIDToken && hasOpenID && h.oidcHandler != nil {
-		idToken, err = h.oidcHandler.CreateIDToken(client.ID, session.UserID, nonce, scopes)
+		idToken, err = h.oidcHandler.CreateIDToken(client.ID, session.UserID, nonce, scopes, oidc.IDTokenExtra{SID: session.ID, AuthTime: session.AuthTime})
 		if err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to create ID token", state)
 			return
@@ -474,16 +546,21 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 
 func (h *Handler) getSession(r *http.Request) *Session {
 	cookie, err := r.Cookie("session_id")
-	if err != nil {
+	if err != nil || h.sessions == nil {
 		return nil
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	session, exists := h.sessions[cookie.Value]
-	if !exists {
+	stored, err := h.sessions.Get(cookie.Value)
+	if err != nil || stored == nil {
 		return nil
 	}
-	return session
+	return &Session{
+		ID:            stored.ID,
+		UserID:        stored.UserID,
+		Username:      stored.Username,
+		Authenticated: true,
+		MFAVerified:   stored.MFAVerified,
+		AuthTime:      stored.AuthTime,
+	}
 }
 
 func (h *Handler) GetSession(r *http.Request) *Session {
@@ -495,16 +572,43 @@ func (h *Handler) SetSession(w http.ResponseWriter, userID, username string) {
 }
 
 func (h *Handler) SetSessionWithMFA(w http.ResponseWriter, userID, username string, mfaVerified bool) {
-	sessionID := uuid.New().String()
-	h.mu.Lock()
-	h.sessions[sessionID] = &Session{
-		UserID:        userID,
-		Username:      username,
-		Authenticated: true,
-		MFAVerified:   mfaVerified,
-	}
-	h.mu.Unlock()
+	h.SetSessionRequest(w, nil, userID, username, mfaVerified)
+}
 
+func (h *Handler) SetSessionRequest(w http.ResponseWriter, r *http.Request, userID, username string, mfaVerified bool) {
+	if h.sessions == nil {
+		return
+	}
+	ua, ip := "", ""
+	if r != nil {
+		ua = r.UserAgent()
+		trusted := []string(nil)
+		if h.cfg != nil {
+			trusted = h.cfg.Security.TrustedProxies
+		}
+		ip = service.ClientIP(r, trusted)
+	}
+	sess, err := h.sessions.Start(userID, username, ua, ip, mfaVerified)
+	if err != nil {
+		return
+	}
+	h.writeSessionCookie(w, sess.ID)
+}
+
+func (h *Handler) MarkSessionMFA(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_id")
+	if err != nil || h.sessions == nil {
+		return
+	}
+	_ = h.sessions.MarkMFA(cookie.Value)
+	h.writeSessionCookie(w, cookie.Value)
+}
+
+func (h *Handler) writeSessionCookie(w http.ResponseWriter, sessionID string) {
+	maxAge := int(h.cfg.Security.SessionLifetime.Seconds())
+	if maxAge <= 0 {
+		maxAge = 8 * 3600
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_id",
 		Value:    sessionID,
@@ -512,7 +616,7 @@ func (h *Handler) SetSessionWithMFA(w http.ResponseWriter, userID, username stri
 		HttpOnly: true,
 		Secure:   h.cfg.Server.TLS.Enabled,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   3600,
+		MaxAge:   maxAge,
 	})
 }
 
@@ -535,9 +639,11 @@ func (h *Handler) clearSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	h.mu.Lock()
-	delete(h.sessions, cookie.Value)
-	h.mu.Unlock()
+	if h.logout != nil {
+		h.logout.End(cookie.Value)
+	} else if h.sessions != nil {
+		_ = h.sessions.Revoke(cookie.Value)
+	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_id",
@@ -626,10 +732,8 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Get client to check DPoP requirement
-	client, err := h.clientRepo.GetByID(authCode.ClientID)
-	if err != nil {
-		writeTokenError(w, http.StatusBadRequest, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, authCode.ClientID, "", http.StatusBadRequest)
+	if !ok {
 		return
 	}
 
@@ -646,28 +750,17 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	// Validate DPoP if required
-	var dpopJKT string
-	if client.DPoPBoundAccessTokens {
-		dpopHeader := r.Header.Get("DPoP")
-		if dpopHeader == "" {
-			writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", "DPoP header required")
-			return
-		}
-		if err := h.ValidateDPoPProof(r, ""); err != nil {
-			writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", err.Error())
-			return
-		}
-		dpopJKT, err = h.GetDPoPJKT(r)
-		if err != nil {
-			writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", "Failed to get JKT")
-			return
-		}
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
 	}
 
 	if authCode.Used {
-		// RFC 6749: Revoke all tokens issued from this code on reuse
-		_ = h.tokenRepo.RevokeAllForClient(authCode.ClientID, authCode.UserID)
+		if authCode.FamilyID != "" {
+			_ = h.tokenRepo.RevokeFamily(authCode.FamilyID)
+		} else {
+			_ = h.tokenRepo.RevokeAllForClient(authCode.ClientID, authCode.UserID)
+		}
 		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Authorization code already used")
 		return
 	}
@@ -710,7 +803,9 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	accessToken, err := crypto.GenerateToken()
+	tokenType := boundTokenType(client)
+
+	accessToken, err := h.issueAccessToken(authCode.ClientID, authCode.UserID, strings.Join(authCode.Scopes, " "), tokenType)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -720,11 +815,6 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate refresh token")
 		return
-	}
-
-	tokenType := "Bearer"
-	if client.DPoPBoundAccessTokens {
-		tokenType = "DPoP"
 	}
 
 	accessTok := &models.AccessToken{
@@ -743,6 +833,7 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		ClientID:    authCode.ClientID,
 		UserID:      authCode.UserID,
 		Scopes:      authCode.Scopes,
+		FamilyID:    authCode.FamilyID,
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
 	}
 
@@ -759,7 +850,7 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 	var idToken string
 	if containsScope(authCode.Scopes, "openid") && h.oidcHandler != nil {
 		// Use nonce stored with the authorization code, not from the token request
-		idToken, err = h.oidcHandler.CreateIDToken(authCode.ClientID, authCode.UserID, authCode.Nonce, authCode.Scopes)
+		idToken, err = h.oidcHandler.CreateIDToken(authCode.ClientID, authCode.UserID, authCode.Nonce, authCode.Scopes, oidc.IDTokenExtra{SID: authCode.SessionID, AuthTime: authCode.AuthTime})
 		if err != nil {
 			writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to create ID token")
 			return
@@ -781,9 +872,8 @@ func (h *Handler) handleClientCredentialsToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	client, err := h.clientRepo.GetByID(clientID)
-	if err != nil {
-		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, clientID, "", http.StatusUnauthorized)
+	if !ok {
 		return
 	}
 
@@ -817,40 +907,23 @@ func (h *Handler) handleClientCredentialsToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Validate DPoP if required
-	var dpopJKT string
-	if client.DPoPBoundAccessTokens {
-		dpopHeader := r.Header.Get("DPoP")
-		if dpopHeader == "" {
-			writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", "DPoP header required")
-			return
-		}
-		if err := h.ValidateDPoPProof(r, ""); err != nil {
-			writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", err.Error())
-			return
-		}
-		dpopJKT, err = h.GetDPoPJKT(r)
-		if err != nil {
-			writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", "Failed to get JKT")
-			return
-		}
-	}
-
-	scope := r.Form.Get("scope")
-	scopes := crypto.NormalizeScopes(scope)
-	if len(scopes) == 0 {
-		scopes = client.Scopes
-	}
-
-	accessToken, err := crypto.GenerateToken()
-	if err != nil {
-		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
 		return
 	}
 
-	tokenType := "Bearer"
-	if client.DPoPBoundAccessTokens {
-		tokenType = "DPoP"
+	scopes, err := service.AllowedScopes(r.Form.Get("scope"), client.Scopes)
+	if err != nil {
+		writeTokenError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
+
+	tokenType := boundTokenType(client)
+
+	accessToken, err := h.issueAccessToken(clientID, "", strings.Join(scopes, " "), tokenType)
+	if err != nil {
+		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
+		return
 	}
 
 	accessTok := &models.AccessToken{
@@ -885,8 +958,11 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 
 	// Refresh token reuse detection - revoke entire grant family
 	if refreshToken.Revoked {
-		// Revoke all tokens for this client/user combination
-		_ = h.tokenRepo.RevokeAllForClient(refreshToken.ClientID, refreshToken.UserID)
+		if refreshToken.FamilyID != "" {
+			_ = h.tokenRepo.RevokeFamily(refreshToken.FamilyID)
+		} else {
+			_ = h.tokenRepo.RevokeAllForClient(refreshToken.ClientID, refreshToken.UserID)
+		}
 		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Refresh token revoked")
 		return
 	}
@@ -902,9 +978,8 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		clientSecret = r.Form.Get("client_secret")
 	}
 
-	client, err := h.clientRepo.GetByID(refreshToken.ClientID)
-	if err != nil {
-		writeTokenError(w, http.StatusBadRequest, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, refreshToken.ClientID, "", http.StatusBadRequest)
+	if !ok {
 		return
 	}
 
@@ -915,7 +990,13 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	newAccessToken, err := crypto.GenerateToken()
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
+	}
+	tokenType := boundTokenType(client)
+
+	newAccessToken, err := h.issueAccessToken(refreshToken.ClientID, refreshToken.UserID, strings.Join(refreshToken.Scopes, " "), tokenType)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -935,16 +1016,22 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		ClientID:  refreshToken.ClientID,
 		UserID:    refreshToken.UserID,
 		Scopes:    refreshToken.Scopes,
-		TokenType: "Bearer",
+		TokenType: tokenType,
+		DPoPJKT:   dpopJKT,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
+	familyID := refreshToken.FamilyID
+	if familyID == "" {
+		familyID = uuid.New().String()
+	}
 	newRefreshTok := &models.RefreshToken{
 		Token:       newRefreshToken,
 		AccessToken: newAccessToken,
 		ClientID:    refreshToken.ClientID,
 		UserID:      refreshToken.UserID,
 		Scopes:      refreshToken.Scopes,
+		FamilyID:    familyID,
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
 	}
 
@@ -958,7 +1045,7 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeTokenResponse(w, newAccessToken, newRefreshToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), "Bearer", strings.Join(refreshToken.Scopes, " "))
+	writeTokenResponse(w, newAccessToken, newRefreshToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), tokenType, strings.Join(refreshToken.Scopes, " "))
 }
 
 func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
@@ -973,9 +1060,8 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.clientRepo.GetByID(clientID)
-	if err != nil {
-		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, clientID, "", http.StatusUnauthorized)
+	if !ok {
 		return
 	}
 
@@ -996,6 +1082,12 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
+	}
+	tokenType := boundTokenType(client)
+
 	username := r.Form.Get("username")
 	password := r.Form.Get("password")
 
@@ -1004,15 +1096,21 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.userRepo.GetByUsername(username)
-	if err != nil {
-		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Invalid username or password")
+	if h.userSvc == nil {
+		writeTokenError(w, http.StatusInternalServerError, "server_error", "Password hasher is not configured")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	user, err := h.userSvc.Authenticate(username, password)
+	if err != nil {
+		if existing, lookupErr := h.userRepo.GetByUsername(username); lookupErr == nil && h.logins != nil {
+			h.logins.Record(existing, r, false, false)
+		}
 		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Invalid username or password")
 		return
+	}
+	if h.logins != nil {
+		h.logins.Record(user, r, true, false)
 	}
 
 	scope := r.Form.Get("scope")
@@ -1021,7 +1119,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		scopes = client.Scopes
 	}
 
-	accessToken, err := crypto.GenerateToken()
+	accessToken, err := h.issueAccessToken(clientID, user.ID, strings.Join(scopes, " "), tokenType)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -1038,7 +1136,8 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		ClientID:  clientID,
 		UserID:    user.ID,
 		Scopes:    scopes,
-		TokenType: "Bearer",
+		TokenType: tokenType,
+		DPoPJKT:   dpopJKT,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -1048,6 +1147,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		ClientID:    clientID,
 		UserID:      user.ID,
 		Scopes:      scopes,
+		FamilyID:    uuid.New().String(),
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
 	}
 
@@ -1070,7 +1170,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeOIDCTokenResponse(w, accessToken, refreshToken, idToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), "Bearer", strings.Join(scopes, " "))
+	writeOIDCTokenResponse(w, accessToken, refreshToken, idToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), tokenType, strings.Join(scopes, " "))
 }
 
 func (h *Handler) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
@@ -1085,9 +1185,8 @@ func (h *Handler) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.clientRepo.GetByID(clientID)
-	if err != nil {
-		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, clientID, "", http.StatusUnauthorized)
+	if !ok {
 		return
 	}
 
@@ -1095,6 +1194,12 @@ func (h *Handler) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials")
 		return
 	}
+
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
+	}
+	tokenType := boundTokenType(client)
 
 	subjectToken := r.Form.Get("subject_token")
 	subjectTokenType := r.Form.Get("subject_token_type")
@@ -1130,7 +1235,7 @@ func (h *Handler) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 		scopes = subjectTokenInfo.Scopes
 	}
 
-	accessToken, err := crypto.GenerateToken()
+	accessToken, err := h.issueAccessToken(clientID, subjectTokenInfo.UserID, strings.Join(scopes, " "), tokenType)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -1141,7 +1246,8 @@ func (h *Handler) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 		ClientID:  clientID,
 		UserID:    subjectTokenInfo.UserID,
 		Scopes:    scopes,
-		TokenType: "Bearer",
+		TokenType: tokenType,
+		DPoPJKT:   dpopJKT,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -1156,7 +1262,7 @@ func (h *Handler) handleTokenExchange(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"access_token":      accessToken,
 		"issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
-		"token_type":        "Bearer",
+		"token_type":        tokenType,
 		"expires_in":        int(h.cfg.Security.AccessTokenLifetime.Seconds()),
 		"scope":             strings.Join(scopes, " "),
 	})
@@ -1196,6 +1302,10 @@ func (h *Handler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 
 	if client.TokenEndpointAuthMethod != "none" && client.Secret != clientSecret {
 		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials")
+		return
+	}
+
+	if !h.revokeDPoP(w, r, client, token) {
 		return
 	}
 
@@ -1315,6 +1425,13 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"})
 		return
 	}
+	if h.cfg != nil && !h.cfg.Registration.DCREnabled {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error":             "registration_disabled",
+			"error_description": "Dynamic client registration is disabled",
+		})
+		return
+	}
 
 	var req struct {
 		RedirectURIs                          []string `json:"redirect_uris"`
@@ -1327,6 +1444,9 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		RequirePushedAuthorizationRequests    bool     `json:"require_pushed_authorization_requests"`
 		BackchannelTokenDeliveryMode          string   `json:"backchannel_token_delivery_mode"`
 		BackchannelClientNotificationEndpoint string   `json:"backchannel_client_notification_endpoint"`
+		BackchannelLogoutURI                  string   `json:"backchannel_logout_uri"`
+		BackchannelLogoutSessionRequired      *bool    `json:"backchannel_logout_session_required"`
+		PostLogoutRedirectURIs                []string `json:"post_logout_redirect_uris"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1369,12 +1489,17 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		Name:                                  req.ClientName,
 		RedirectURIs:                          req.RedirectURIs,
 		GrantTypes:                            req.GrantTypes,
-		Scopes:                                strings.Fields(req.Scope),
+		Scopes:                                service.StripManagement(strings.Fields(req.Scope)),
 		TokenEndpointAuthMethod:               req.TokenEndpointAuthMethod,
 		DPoPBoundAccessTokens:                 req.DPoPBoundAccessTokens,
 		RequirePushedAuthorizationRequests:    req.RequirePushedAuthorizationRequests,
 		BackchannelTokenDeliveryMode:          req.BackchannelTokenDeliveryMode,
 		BackchannelClientNotificationEndpoint: req.BackchannelClientNotificationEndpoint,
+		BackchannelLogoutURI:                  req.BackchannelLogoutURI,
+		BackchannelLogoutSessionRequired:      req.BackchannelLogoutSessionRequired == nil || *req.BackchannelLogoutSessionRequired,
+		PostLogoutRedirectURIs:                req.PostLogoutRedirectURIs,
+		RegistrationSource:                    "dcr",
+		DCREnabled:                            true,
 		CreatedAt:                             time.Now(),
 		UpdatedAt:                             time.Now(),
 	}
@@ -1382,6 +1507,9 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	if err := h.clientRepo.Create(client); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error", "error_description": "Failed to create client"})
 		return
+	}
+	if h.audit != nil {
+		h.audit.Write("client", client.ID, "client.register", "client", client.ID, r, map[string]any{"name": client.Name, "source": "dcr"})
 	}
 
 	response := map[string]interface{}{
@@ -1437,6 +1565,22 @@ func isValidRedirectURI(uri string, allowedURIs []string) bool {
 
 func isValidURI(uri string) bool {
 	return strings.HasPrefix(uri, "https://") || strings.HasPrefix(uri, "http://localhost")
+}
+
+func (h *Handler) issueAccessToken(clientID, userID, scope, tokenType string) (string, error) {
+	format := ""
+	var lifetime time.Duration
+	if h.cfg != nil {
+		format = h.cfg.Security.AccessTokenFormat
+		lifetime = h.cfg.Security.AccessTokenLifetime
+	}
+	if format == "jwt" {
+		if h.oidcHandler == nil {
+			return "", fmt.Errorf("jwt access tokens require the oidc handler")
+		}
+		return h.oidcHandler.CreateAccessTokenJWT(clientID, userID, scope, tokenType, lifetime)
+	}
+	return crypto.GenerateToken()
 }
 
 func mustGenerateToken() string {

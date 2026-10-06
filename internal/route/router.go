@@ -13,9 +13,11 @@ import (
 	"github.com/go-chi/cors"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bravo68web/oauth-impl/internal/auth"
 	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
+	"github.com/bravo68web/oauth-impl/internal/service"
 )
 
 type Router struct {
@@ -24,8 +26,17 @@ type Router struct {
 	webCtrl        *controller.WebController
 	oauthHandler   *oauth.Handler
 	oidcHandler    *oidc.Handler
+	accountCtrl    *controller.AccountController
+	authn          *auth.Middleware
 	openapiJSON    []byte
 	templateFS     embed.FS
+	csp            string
+}
+
+func (r *Router) SetContentSecurityPolicy(policy string) {
+	if r != nil && policy != "" {
+		r.csp = policy
+	}
 }
 
 func NewRouter(
@@ -33,6 +44,8 @@ func NewRouter(
 	webCtrl *controller.WebController,
 	oauthHandler *oauth.Handler,
 	oidcHandler *oidc.Handler,
+	accountCtrl *controller.AccountController,
+	authn *auth.Middleware,
 	openapiSpec []byte,
 	templateFS embed.FS,
 ) *Router {
@@ -48,8 +61,11 @@ func NewRouter(
 		webCtrl:        webCtrl,
 		oauthHandler:   oauthHandler,
 		oidcHandler:    oidcHandler,
+		accountCtrl:    accountCtrl,
+		authn:          authn,
 		openapiJSON:    openapiJSON,
 		templateFS:     templateFS,
+		csp:            service.ContentSecurityPolicy(""),
 	}
 
 	r.setupMiddleware()
@@ -83,7 +99,7 @@ func (r *Router) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net")
+		w.Header().Set("Content-Security-Policy", r.csp)
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		next.ServeHTTP(w, req)
 	})
@@ -97,55 +113,10 @@ func (r *Router) setupRoutes() {
 	})
 
 	r.mux.Route("/api", func(r2 chi.Router) {
-		r2.Route("/clients", func(r3 chi.Router) {
-			r3.Get("/", r.managementCtrl.HandleListClients)
-			r3.Post("/", r.managementCtrl.HandleCreateClient)
-			r3.Get("/{clientID}", r.managementCtrl.HandleGetClient)
-			r3.Put("/{clientID}", r.managementCtrl.HandleUpdateClient)
-			r3.Delete("/{clientID}", r.managementCtrl.HandleDeleteClient)
-		})
-
-		r2.Route("/users", func(r3 chi.Router) {
-			r3.Get("/", r.managementCtrl.HandleListUsers)
-			r3.Post("/", r.managementCtrl.HandleCreateUser)
-			// MFA routes must be before /{userID} to avoid conflicts
-			r3.Post("/{userID}/mfa/enable", r.managementCtrl.HandleMFAEnable)
-			r3.Post("/{userID}/mfa/verify", r.managementCtrl.HandleMFAVerify)
-			r3.Get("/{userID}/mfa/status", r.managementCtrl.HandleMFAStatus)
-			r3.Post("/{userID}/mfa/disable", r.managementCtrl.HandleMFADisable)
-			r3.Get("/{userID}", r.managementCtrl.HandleGetUser)
-		})
-
-		r2.Route("/tokens", func(r3 chi.Router) {
-			r3.Get("/", r.managementCtrl.HandleListTokens)
-			r3.Post("/{token}/revoke", r.managementCtrl.HandleRevokeToken)
-		})
-
-		r2.Route("/ciba", func(r3 chi.Router) {
-			r3.Get("/pending", r.oauthHandler.HandleCIBAListPending)
-			r3.Post("/{authReqID}/approve", r.oauthHandler.HandleCIBAApprove)
-			r3.Post("/{authReqID}/deny", r.oauthHandler.HandleCIBADeny)
-		})
-
-		r2.Route("/scopes", func(r3 chi.Router) {
-			r3.Get("/", r.managementCtrl.HandleListScopes)
-			r3.Post("/", r.managementCtrl.HandleCreateScope)
-			r3.Get("/{name}", r.managementCtrl.HandleGetScope)
-			r3.Delete("/{name}", r.managementCtrl.HandleDeleteScope)
-		})
-
-		r2.Route("/resources", func(r3 chi.Router) {
-			r3.Get("/", r.managementCtrl.HandleListResources)
-			r3.Post("/", r.managementCtrl.HandleCreateResource)
-			r3.Get("/{uri}", r.managementCtrl.HandleGetResource)
-			r3.Put("/{uri}", r.managementCtrl.HandleUpdateResource)
-			r3.Delete("/{uri}", r.managementCtrl.HandleDeleteResource)
-			r3.Get("/{uri}/scopes", r.managementCtrl.HandleListResourceScopes)
-		})
-
-		r2.Route("/consents", func(r3 chi.Router) {
-			r3.Get("/", r.managementCtrl.HandleListConsents)
-			r3.Delete("/", r.managementCtrl.HandleRevokeConsent)
+		MountAccountAPI(r2, r.accountCtrl, r.authn.RequireUser)
+		r2.Group(func(mgmt chi.Router) {
+			mgmt.Use(r.authn.RequireManagement)
+			mountManagement(mgmt, r)
 		})
 	})
 
@@ -167,6 +138,7 @@ func (r *Router) setupRoutes() {
 	})
 
 	r.mux.Route("/ciba", func(r2 chi.Router) {
+		r2.Use(r.authn.RequireManagement)
 		r2.Get("/pending", r.oauthHandler.HandleCIBAListPending)
 		r2.Get("/status", r.oauthHandler.HandleCIBAStatus)
 		r2.Post("/approve", r.oauthHandler.HandleCIBAApprove)
@@ -182,6 +154,10 @@ func (r *Router) setupRoutes() {
 		r2.Get("/userinfo", r.oidcHandler.HandleUserInfo)
 		r2.Get("/jwks", r.oidcHandler.HandleJWKS)
 	})
+
+	r.mux.Get("/branding/assets/{name}", r.webCtrl.ServeBrandAsset)
+	r.mux.Get("/login/social/{provider}/callback", r.webCtrl.HandleSocialCallback)
+	r.mux.Get("/login/social/{provider}", r.webCtrl.HandleSocialStart)
 
 	r.mux.Route("/login", func(r2 chi.Router) {
 		r2.Get("/", r.webCtrl.HandleLoginPage)
@@ -201,6 +177,8 @@ func (r *Router) setupRoutes() {
 		r2.Get("/", r.webCtrl.HandleConsentPage)
 		r2.Post("/", r.webCtrl.HandleConsent)
 	})
+
+	MountBrowserExtras(r.mux, r.accountCtrl, r.oauthHandler)
 
 	r.mux.Route("/mfa", func(r2 chi.Router) {
 		r2.Get("/enroll", r.webCtrl.HandleMFAEnrollPage)
@@ -230,6 +208,60 @@ func (r *Router) setupRoutes() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, nil)
 	})
+}
+
+func mountManagement(mgmt chi.Router, r *Router) {
+	mgmt.Route("/clients", func(r3 chi.Router) {
+		r3.Get("/", r.managementCtrl.HandleListClients)
+		r3.Post("/", r.managementCtrl.HandleCreateClient)
+		r3.Get("/{clientID}", r.managementCtrl.HandleGetClient)
+		r3.Put("/{clientID}", r.managementCtrl.HandleUpdateClient)
+		r3.Delete("/{clientID}", r.managementCtrl.HandleDeleteClient)
+	})
+
+	mgmt.Route("/users", func(r3 chi.Router) {
+		r3.Get("/", r.managementCtrl.HandleListUsers)
+		r3.Post("/", r.managementCtrl.HandleCreateUser)
+		r3.Post("/{userID}/mfa/enable", r.managementCtrl.HandleMFAEnable)
+		r3.Post("/{userID}/mfa/verify", r.managementCtrl.HandleMFAVerify)
+		r3.Get("/{userID}/mfa/status", r.managementCtrl.HandleMFAStatus)
+		r3.Post("/{userID}/mfa/disable", r.managementCtrl.HandleMFADisable)
+		r3.Get("/{userID}", r.managementCtrl.HandleGetUser)
+	})
+
+	mgmt.Route("/tokens", func(r3 chi.Router) {
+		r3.Get("/", r.managementCtrl.HandleListTokens)
+		r3.Post("/{token}/revoke", r.managementCtrl.HandleRevokeToken)
+	})
+
+	mgmt.Route("/ciba", func(r3 chi.Router) {
+		r3.Get("/pending", r.oauthHandler.HandleCIBAListPending)
+		r3.Post("/{authReqID}/approve", r.oauthHandler.HandleCIBAApprove)
+		r3.Post("/{authReqID}/deny", r.oauthHandler.HandleCIBADeny)
+	})
+
+	mgmt.Route("/scopes", func(r3 chi.Router) {
+		r3.Get("/", r.managementCtrl.HandleListScopes)
+		r3.Post("/", r.managementCtrl.HandleCreateScope)
+		r3.Get("/{name}", r.managementCtrl.HandleGetScope)
+		r3.Delete("/{name}", r.managementCtrl.HandleDeleteScope)
+	})
+
+	mgmt.Route("/resources", func(r3 chi.Router) {
+		r3.Get("/", r.managementCtrl.HandleListResources)
+		r3.Post("/", r.managementCtrl.HandleCreateResource)
+		r3.Get("/{uri}", r.managementCtrl.HandleGetResource)
+		r3.Put("/{uri}", r.managementCtrl.HandleUpdateResource)
+		r3.Delete("/{uri}", r.managementCtrl.HandleDeleteResource)
+		r3.Get("/{uri}/scopes", r.managementCtrl.HandleListResourceScopes)
+	})
+
+	mgmt.Route("/consents", func(r3 chi.Router) {
+		r3.Get("/", r.managementCtrl.HandleListConsents)
+		r3.Delete("/", r.managementCtrl.HandleRevokeConsent)
+	})
+
+	MountManagementExtras(mgmt, r.managementCtrl)
 }
 
 func (r *Router) GetMux() *chi.Mux {

@@ -30,6 +30,11 @@ type CreateClientInput struct {
 	BackchannelTokenDeliveryMode               string
 	BackchannelClientNotificationEndpoint      string
 	BackchannelAuthenticationRequestSigningAlg string
+	BackchannelLogoutURI                       string
+	BackchannelLogoutSessionRequired           *bool
+	PostLogoutRedirectURIs                     []string
+	DCREnabled                                 bool
+	CIMDEnabled                                bool
 }
 
 func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, error) {
@@ -39,6 +44,16 @@ func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, e
 
 	if input.TokenEndpointAuthMethod == "" {
 		input.TokenEndpointAuthMethod = "client_secret_basic"
+	}
+	sessionRequired := true
+	if input.BackchannelLogoutSessionRequired != nil {
+		sessionRequired = *input.BackchannelLogoutSessionRequired
+	}
+	if input.RedirectURIs == nil {
+		input.RedirectURIs = []string{}
+	}
+	if input.PostLogoutRedirectURIs == nil {
+		input.PostLogoutRedirectURIs = []string{}
 	}
 
 	client := &models.Client{
@@ -54,8 +69,14 @@ func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, e
 		BackchannelTokenDeliveryMode:          input.BackchannelTokenDeliveryMode,
 		BackchannelClientNotificationEndpoint: input.BackchannelClientNotificationEndpoint,
 		BackchannelAuthenticationRequestSigningAlg: input.BackchannelAuthenticationRequestSigningAlg,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		BackchannelLogoutURI:                       input.BackchannelLogoutURI,
+		BackchannelLogoutSessionRequired:           sessionRequired,
+		PostLogoutRedirectURIs:                     input.PostLogoutRedirectURIs,
+		RegistrationSource:                         "management",
+		DCREnabled:                                 input.DCREnabled,
+		CIMDEnabled:                                input.CIMDEnabled,
+		CreatedAt:                                  time.Now(),
+		UpdatedAt:                                  time.Now(),
 	}
 
 	if err := s.clientRepo.Create(client); err != nil {

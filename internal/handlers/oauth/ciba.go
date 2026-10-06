@@ -95,13 +95,22 @@ func (h *Handler) HandleBCAuthorize(w http.ResponseWriter, r *http.Request) {
 	interval := 5
 	expiresIn := 600 // Default 10 minutes
 
+	resolvedUserID := ""
+	if h.userRepo != nil {
+		if user, err := h.userRepo.GetByUsername(loginHint); err == nil {
+			resolvedUserID = user.ID
+		} else if user, err := h.userRepo.GetByEmail(loginHint); err == nil {
+			resolvedUserID = user.ID
+		}
+	}
 	cibaReq := &models.CIBARequest{
 		AuthReqID:      authReqID,
 		ClientID:       clientID,
-		UserID:         loginHint,
+		UserID:         resolvedUserID,
 		BindingMessage: bindingMessage,
 		Scopes:         scopes,
 		Status:         "pending",
+		DeliveryMode:   "poll",
 		ExpiresAt:      time.Now().Add(time.Duration(expiresIn) * time.Second),
 		Interval:       interval,
 	}
@@ -173,9 +182,8 @@ func (h *Handler) HandleCIBAToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.clientRepo.GetByID(cibaReq.ClientID)
-	if err != nil {
-		writeTokenError(w, http.StatusBadRequest, "invalid_client", "Client not found")
+	client, ok := h.requireClient(w, cibaReq.ClientID, "", http.StatusBadRequest)
+	if !ok {
 		return
 	}
 
@@ -203,7 +211,18 @@ func (h *Handler) HandleCIBAToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := crypto.GenerateToken()
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
+	}
+	tokenType := boundTokenType(client)
+
+	var userID string
+	if queueReq, qerr := h.q.GetByID(authReqID); qerr == nil && queueReq.UserID != "" {
+		userID = queueReq.UserID
+	}
+
+	accessToken, err := h.issueAccessToken(cibaReq.ClientID, userID, strings.Join(cibaReq.Scopes, " "), tokenType)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -215,18 +234,13 @@ func (h *Handler) HandleCIBAToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID string
-	queueReq, err := h.q.GetByID(authReqID)
-	if err == nil && queueReq.UserID != "" {
-		userID = queueReq.UserID
-	}
-
 	accessTok := &models.AccessToken{
 		Token:     accessToken,
 		ClientID:  cibaReq.ClientID,
 		UserID:    userID,
 		Scopes:    cibaReq.Scopes,
-		TokenType: "Bearer",
+		TokenType: tokenType,
+		DPoPJKT:   dpopJKT,
 		ExpiresAt: time.Now().Add(3600 * time.Second),
 	}
 
@@ -249,7 +263,7 @@ func (h *Handler) HandleCIBAToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeTokenResponse(w, accessToken, refreshToken, 3600, "Bearer", strings.Join(cibaReq.Scopes, " "))
+	writeTokenResponse(w, accessToken, refreshToken, 3600, tokenType, strings.Join(cibaReq.Scopes, " "))
 }
 
 func (h *Handler) HandleCIBAStatus(w http.ResponseWriter, r *http.Request) {

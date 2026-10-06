@@ -23,9 +23,14 @@ echo "   Client ID: $CLIENT_ID"
 
 echo ""
 echo "2. Create test user..."
+if [ -z "$MGMT_TOKEN" ]; then
+    echo "   Set MGMT_TOKEN to a management access token. Skipping user creation."
+else
 curl -s -X POST "$SERVER/api/users" \
+    -H "Authorization: Bearer $MGMT_TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"username":"dpopuser","password":"pass123","email":"dpop@example.com"}' > /dev/null
+fi
 
 echo ""
 echo "3. Generate DPoP key pair (simulated)..."

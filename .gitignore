@@ -58,6 +58,10 @@ docs/site/
 # Test fixtures
 testdata/
 
+# Node end-to-end suite
+e2e/node_modules/
+e2e/.cache/
+
 # Temporary files
 *.tmp
 *.bak

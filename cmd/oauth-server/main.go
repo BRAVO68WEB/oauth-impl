@@ -13,10 +13,13 @@ import (
 	"time"
 
 	root "github.com/bravo68web/oauth-impl"
+	"github.com/bravo68web/oauth-impl/internal/auth"
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
+	"github.com/bravo68web/oauth-impl/internal/hashalgo"
+	"github.com/bravo68web/oauth-impl/internal/mailer"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
 	"github.com/bravo68web/oauth-impl/internal/queue"
 	"github.com/bravo68web/oauth-impl/internal/repository"
@@ -24,16 +27,62 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/service"
 )
 
+func loadRuntimeConfig(flagPath string) (*config.Config, error) {
+	path := flagPath
+	if path == "" {
+		_, err := os.Stat("config.yaml")
+		switch {
+		case err == nil:
+			path = "config.yaml"
+		case os.IsNotExist(err):
+			log.Println("No config file found; using built-in defaults")
+			return config.DefaultConfig(), nil
+		default:
+			return nil, fmt.Errorf("stat config.yaml: %w", err)
+		}
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("Loaded config from %s", path)
+	return cfg, nil
+}
+
 func main() {
 	configPath := flag.String("config", "", "Path to config file")
 	port := flag.Int("port", 0, "Server port (overrides config)")
 	dbPath := flag.String("db", "", "Database path (overrides config)")
 	flag.Parse()
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := loadRuntimeConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get working directory: %v", err)
+	}
+	cfg.Normalize()
+	if err := config.ValidateBranding(cfg); err != nil {
+		log.Fatalf("branding: %v", err)
+	}
+	if err := config.ValidateSocial(cfg); err != nil {
+		log.Fatalf("social login: %v", err)
+	}
+	if err := config.ValidatePlatform(cfg); err != nil {
+		log.Fatalf("platform: %v", err)
+	}
+	if err := service.ValidateTrustedProxies(cfg.Security.TrustedProxies); err != nil {
+		log.Fatalf("trusted proxies: %v", err)
+	}
+	hasher, err := hashalgo.Prepare(wd, os.Getenv("HASH_ALGO"), cfg.Security.HashAlgo)
+	if err != nil {
+		log.Fatalf("password hasher: %v", err)
+	}
+	log.Printf("password hasher: %s (%s)", hasher.ID(), hashalgo.CanonicalRel)
 
 	if *port > 0 {
 		cfg.Server.Port = *port
@@ -61,6 +110,9 @@ func main() {
 	}
 
 	conn := db.Conn()
+	if err := service.SeedManagementClient(repository.NewClientRepository(conn), cfg); err != nil {
+		log.Fatalf("management client: %v", err)
+	}
 
 	// Repositories
 	clientRepo := repository.NewClientRepository(conn)
@@ -73,6 +125,9 @@ func main() {
 	consentRepo := repository.NewConsentRepository(conn)
 	scopeRepo := repository.NewScopeRepository(conn)
 	resourceRepo := repository.NewResourceRepository(conn)
+	sessionRepo := repository.NewSessionRepository(conn)
+	emailTokens := repository.NewEmailTokenRepository(conn)
+	loginEvents := repository.NewLoginEventRepository(conn)
 
 	// OIDC handler (generates RSA + EC keys on startup)
 	oidcHandler, err := oidc.NewHandler(db, cfg)
@@ -80,17 +135,35 @@ func main() {
 		log.Fatalf("Failed to create OIDC handler: %v", err)
 	}
 
+	mail, err := mailer.New(cfg.SMTP)
+	if err != nil {
+		log.Fatalf("smtp: %v", err)
+	}
+
 	// Queue
 	q := queue.NewMemoryQueue(cfg.Queue.MaxPending)
 
 	// Services
 	totpSvc := service.NewTOTPService(userRepo, &cfg.Security.MFA)
-	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security)
+	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security, hasher)
 	clientSvc := service.NewClientService(clientRepo)
 	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
 	dpopSvc := service.NewDPoPService()
 	mtlsSvc := service.NewMTLSService()
 	jarSvc := service.NewJARService(cfg.Security.Issuer)
+	sessionSvc := service.NewSessionService(sessionRepo, cfg.Security.SessionLifetime)
+	logoutSvc := service.NewLogoutService(sessionSvc, clientRepo, oidcHandler)
+	accountSvc := service.NewAccountService(userSvc, userRepo, emailTokens, loginEvents, sessionSvc, tokenRepo, mail, logoutSvc, cfg)
+	hooks := service.NewWebhookDispatcher(repository.NewWebhookRepository(conn))
+	hooks.SetFetchConfig(cfg)
+	logoutSvc.SetFetchConfig(cfg)
+	accountSvc.SetWebhooks(hooks)
+	logoutSvc.SetWebhooks(hooks)
+	oidcHandler.SetDPoPCheck(func(header, method, uri, accessToken string) error {
+		_, err := dpopSvc.ValidateDPoPProof(header, method, uri, accessToken)
+		return err
+	})
+	oidc.StartRotation(oidcHandler.GetKeySet(), cfg.OIDC.KeyRotationInterval, cfg.OIDC.KeyRetain)
 
 	// Load CRL if configured
 	if cfg.Server.TLS.CRLFile != "" {
@@ -102,17 +175,30 @@ func main() {
 	}
 
 	// OAuth handler
-	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler)
+	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler, userSvc, sessionSvc, logoutSvc, accountSvc)
+	oauthHandler.SetWebhooks(hooks)
 
 	// Controllers
-	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo)
-	webCtrl, err := controller.NewWebController(userSvc, totpSvc, cfg, root.TemplateFS, oauthHandler)
+	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo, accountSvc, sessionSvc, tokenRepo)
+	auditLog := service.NewAuditLog(repository.NewAuditRepository(conn))
+	mgmtCtrl.SetWebhooks(hooks)
+	mgmtCtrl.SetAudit(auditLog)
+	mgmtCtrl.SetKeys(oidcHandler.GetKeySet(), cfg.OIDC.KeyRetain)
+	oauthHandler.SetAudit(auditLog)
+	webCtrl, err := controller.NewWebController(userSvc, totpSvc, accountSvc, cfg, root.TemplateFS, oauthHandler)
 	if err != nil {
 		log.Fatalf("Failed to create web controller: %v", err)
 	}
+	webCtrl.SetAudit(auditLog)
+	webCtrl.SetSocial(service.NewSocialService(cfg, userSvc, userRepo, repository.NewSocialRepository(conn), accountSvc, nil))
+	oauthHandler.SetTemplates(webCtrl.Templates())
+	accountCtrl := controller.NewAccountController(accountSvc, userSvc, sessionSvc, tokenRepo, totpSvc, oauthHandler, webCtrl.Templates(), cfg)
+	accountCtrl.SetAudit(auditLog)
+	authn := auth.NewMiddleware(tokenRepo, clientRepo, userRepo, dpopSvc)
 
 	// Router
-	router := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, root.OpenAPISpec, root.TemplateFS)
+	router := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
+	router.SetContentSecurityPolicy(service.ContentSecurityPolicy(cfg.Security.BotProtection.Provider))
 
 	// Build TLS config
 	tlsConfig := &tls.Config{

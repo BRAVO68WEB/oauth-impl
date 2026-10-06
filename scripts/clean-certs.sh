@@ -47,6 +47,26 @@ security:
   require_pkce: false
   allow_plain_pkce: true
   issuer: "http://localhost:8080"
+  hash_algo: "internal/hashalgo/algo.go"
+  session_lifetime: 8h
+  reset_token_lifetime: 30m
+  trusted_proxies: []
+  disable_registration: false
+  disable_social_registration: false
+  allow_insecure_fetch: false
+  fetch_allow_ips: []
+  password:
+    min_length: 8
+    max_length: 128
+    require_uppercase: false
+    require_lowercase: false
+    require_number: false
+    require_symbol: false
+    block_username: true
+  bot_protection:
+    provider: ""
+    site_key: ""
+    secret_key: ""
   mfa:
     enabled: false
     required: false
@@ -64,6 +84,47 @@ security:
     nonce_required: false
     nonce_lifetime: 300
 
+management:
+  client_id: ""
+  client_secret: ""
+
+smtp:
+  enabled: false
+  host: ""
+  port: 587
+  username: ""
+  password: ""
+  from: ""
+  starttls: true
+  implicit_tls: false
+
+social:
+  providers: []
+
+branding:
+  product_name: "OAuth Server"
+  login_title: "Sign In"
+  username_label: "Username"
+  password_label: "Password"
+  submit_label: "Sign In"
+  assets_dir: ""
+  logo_file: ""
+  favicon_file: ""
+  primary_color: "#0066ff"
+  background_color: ""
+  text_color: ""
+  footer_text: ""
+  support_url: ""
+  privacy_url: ""
+  terms_url: ""
+  show_register: true
+  show_forgot_password: true
+  templates: ""
+
+registration:
+  dcr_enabled: true
+  cimd_enabled: false
+
 queue:
   type: "memory"
   poll_interval: 5s
@@ -71,6 +132,9 @@ queue:
 
 oidc:
   issuer: "http://localhost:8080"
+  key_rotation_interval: 0s
+  key_retain: 48h
+  claim_mappings: []
   supported_scopes:
     - openid
     - profile

@@ -159,6 +159,96 @@ func (db *DB) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_device_codes_status ON device_codes(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_ciba_requests_status ON ciba_requests(status)`,
 
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			username TEXT,
+			auth_time DATETIME NOT NULL,
+			mfa_verified INTEGER NOT NULL DEFAULT 0,
+			user_agent TEXT,
+			ip TEXT,
+			created_at DATETIME NOT NULL,
+			expires_at DATETIME NOT NULL,
+			revoked INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		`CREATE TABLE IF NOT EXISTS session_clients (
+			sid TEXT NOT NULL,
+			client_id TEXT NOT NULL,
+			PRIMARY KEY (sid, client_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS email_tokens (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			purpose TEXT NOT NULL,
+			token_hash TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			used_at DATETIME,
+			created_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_tokens_hash ON email_tokens(token_hash)`,
+		`CREATE TABLE IF NOT EXISTS login_events (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			success INTEGER NOT NULL,
+			mfa INTEGER NOT NULL DEFAULT 0,
+			ip TEXT,
+			user_agent TEXT,
+			created_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_login_events_ip ON login_events(ip, created_at)`,
+		`CREATE TABLE IF NOT EXISTS schema_flags (
+			name TEXT PRIMARY KEY
+		)`,
+		`CREATE TABLE IF NOT EXISTS social_logins (
+			state TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			verifier TEXT NOT NULL,
+			nonce TEXT NOT NULL,
+			params_json TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			used INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS social_identities (
+			provider TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			email TEXT,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (provider, subject)
+		)`,
+		`CREATE TABLE IF NOT EXISTS audit_logs (
+			id TEXT PRIMARY KEY,
+			actor_type TEXT NOT NULL,
+			actor_id TEXT NOT NULL,
+			action TEXT NOT NULL,
+			target_type TEXT,
+			target_id TEXT,
+			ip TEXT,
+			user_agent TEXT,
+			metadata TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS signing_keys (
+			kid TEXT PRIMARY KEY,
+			alg TEXT NOT NULL,
+			status TEXT NOT NULL,
+			private_pem TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			retire_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS webhooks (
+			id TEXT PRIMARY KEY,
+			url TEXT NOT NULL,
+			secret TEXT NOT NULL,
+			events TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			description TEXT,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)`,
+
 		// Consent persistence
 		`CREATE TABLE IF NOT EXISTS consents (
 			id TEXT PRIMARY KEY,
@@ -207,10 +297,36 @@ func (db *DB) Migrate() error {
 		`ALTER TABLE clients ADD COLUMN jwks TEXT`,
 		`ALTER TABLE clients ADD COLUMN jwks_uri TEXT`,
 		`ALTER TABLE clients ADD COLUMN request_object_signing_alg TEXT`,
+		`ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN given_name TEXT`,
+		`ALTER TABLE users ADD COLUMN family_name TEXT`,
+		`ALTER TABLE clients ADD COLUMN backchannel_logout_uri TEXT`,
+		`ALTER TABLE clients ADD COLUMN backchannel_logout_session_required INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE clients ADD COLUMN post_logout_redirect_uris TEXT`,
+		`ALTER TABLE device_codes ADD COLUMN user_id TEXT`,
+		`ALTER TABLE device_codes ADD COLUMN session_id TEXT`,
+		`ALTER TABLE device_codes ADD COLUMN auth_time DATETIME`,
+		`ALTER TABLE refresh_tokens ADD COLUMN id TEXT`,
+		`ALTER TABLE refresh_tokens ADD COLUMN family_id TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN family_id TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN session_id TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN auth_time DATETIME`,
+		`ALTER TABLE users ADD COLUMN attributes TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE clients ADD COLUMN registration_source TEXT NOT NULL DEFAULT 'management'`,
+		`ALTER TABLE clients ADD COLUMN dcr_enabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE clients ADD COLUMN cimd_enabled INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ciba_requests ADD COLUMN scopes TEXT`,
 	}
 	for _, alter := range alters {
 		_, _ = db.conn.Exec(alter)
 	}
+
+	if _, err := db.conn.Exec(`INSERT INTO schema_flags (name) VALUES ('email_verified_backfill')`); err == nil {
+		_, _ = db.conn.Exec(`UPDATE users SET email_verified = 1 WHERE email IS NOT NULL AND email != ''`)
+	}
+	_, _ = db.conn.Exec(`UPDATE refresh_tokens SET id = lower(hex(randomblob(16))) WHERE id IS NULL OR id = ''`)
+	_, _ = db.conn.Exec(`UPDATE refresh_tokens SET family_id = lower(hex(randomblob(16))) WHERE family_id IS NULL OR family_id = ''`)
 
 	return nil
 }
@@ -347,43 +463,88 @@ func (db *DB) DeleteClient(id string) error {
 	return err
 }
 
+func parseAttributes(raw string) map[string]string {
+	out := map[string]string{}
+	if raw == "" || raw == "{}" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	if out == nil {
+		return map[string]string{}
+	}
+	return out
+}
+
 func (db *DB) CreateUser(user *models.User) error {
-	query := `INSERT INTO users (id, username, password_hash, email, phone_number, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO users (id, username, password_hash, email, phone_number, created_at,
+		email_verified, disabled, given_name, family_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := db.conn.Exec(query,
 		user.ID, user.Username, user.PasswordHash,
 		user.Email, user.PhoneNumber, user.CreatedAt,
+		user.EmailVerified, user.Disabled, user.GivenName, user.FamilyName,
 	)
 	return err
 }
 
 func (db *DB) GetUser(id string) (*models.User, error) {
-	query := `SELECT id, username, password_hash, email, phone_number, created_at
+	query := `SELECT id, username, password_hash, COALESCE(email, ''), COALESCE(phone_number, ''), created_at,
+		last_login_at, COALESCE(email_verified, 0), COALESCE(disabled, 0), COALESCE(given_name, ''), COALESCE(family_name, ''), COALESCE(attributes, '{}')
 		FROM users WHERE id = ?`
 
 	user := &models.User{}
+	var lastLogin sql.NullTime
+	var emailVerified, disabled int
+	var attrs string
 	err := db.conn.QueryRow(query, id).Scan(
 		&user.ID, &user.Username, &user.PasswordHash,
 		&user.Email, &user.PhoneNumber, &user.CreatedAt,
+		&lastLogin, &emailVerified, &disabled, &user.GivenName, &user.FamilyName, &attrs,
 	)
-	return user, err
+	if err != nil {
+		return nil, err
+	}
+	if lastLogin.Valid {
+		t := lastLogin.Time
+		user.LastLoginAt = &t
+	}
+	user.EmailVerified = emailVerified != 0
+	user.Disabled = disabled != 0
+	user.Attributes = parseAttributes(attrs)
+	return user, nil
 }
 
 func (db *DB) GetUserByUsername(username string) (*models.User, error) {
-	query := `SELECT id, username, password_hash, email, phone_number, created_at
+	query := `SELECT id, username, password_hash, COALESCE(email, ''), COALESCE(phone_number, ''), created_at,
+		last_login_at, COALESCE(email_verified, 0), COALESCE(disabled, 0), COALESCE(given_name, ''), COALESCE(family_name, ''), COALESCE(attributes, '{}')
 		FROM users WHERE username = ?`
 
 	user := &models.User{}
+	var lastLogin sql.NullTime
+	var emailVerified, disabled int
+	var attrs string
 	err := db.conn.QueryRow(query, username).Scan(
 		&user.ID, &user.Username, &user.PasswordHash,
 		&user.Email, &user.PhoneNumber, &user.CreatedAt,
+		&lastLogin, &emailVerified, &disabled, &user.GivenName, &user.FamilyName, &attrs,
 	)
-	return user, err
+	if err != nil {
+		return nil, err
+	}
+	if lastLogin.Valid {
+		t := lastLogin.Time
+		user.LastLoginAt = &t
+	}
+	user.EmailVerified = emailVerified != 0
+	user.Disabled = disabled != 0
+	user.Attributes = parseAttributes(attrs)
+	return user, nil
 }
 
 func (db *DB) ListUsers() ([]*models.User, error) {
-	query := `SELECT id, username, password_hash, email, phone_number, created_at
+	query := `SELECT id, username, password_hash, COALESCE(email, ''), COALESCE(phone_number, ''), created_at,
+		last_login_at, COALESCE(email_verified, 0), COALESCE(disabled, 0), COALESCE(given_name, ''), COALESCE(family_name, ''), COALESCE(attributes, '{}')
 		FROM users ORDER BY created_at DESC`
 
 	rows, err := db.conn.Query(query)
@@ -395,13 +556,24 @@ func (db *DB) ListUsers() ([]*models.User, error) {
 	users := make([]*models.User, 0)
 	for rows.Next() {
 		user := &models.User{}
+		var lastLogin sql.NullTime
+		var emailVerified, disabled int
+		var attrs string
 		err := rows.Scan(
 			&user.ID, &user.Username, &user.PasswordHash,
 			&user.Email, &user.PhoneNumber, &user.CreatedAt,
+			&lastLogin, &emailVerified, &disabled, &user.GivenName, &user.FamilyName, &attrs,
 		)
 		if err != nil {
 			return nil, err
 		}
+		if lastLogin.Valid {
+			t := lastLogin.Time
+			user.LastLoginAt = &t
+		}
+		user.EmailVerified = emailVerified != 0
+		user.Disabled = disabled != 0
+		user.Attributes = parseAttributes(attrs)
 		users = append(users, user)
 	}
 	return users, nil

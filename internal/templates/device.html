@@ -1,0 +1,33 @@
+{{template "head" .}}
+{{template "brand_header" .}}
+    {{if .Done}}
+        {{if .Approved}}
+            <p class="lede">The device is authorized. You can return to it.</p>
+        {{else}}
+            <p class="lede">The request was denied.</p>
+        {{end}}
+    {{else}}
+        {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+        {{if .Confirm}}
+            <p class="lede"><strong>{{.ClientName}}</strong> is asking to sign in.</p>
+            {{if .Scopes}}
+            <div class="scope-list">
+                <h3>Requested access</h3>
+                {{range .Scopes}}<div class="scope-item">{{.}}</div>{{end}}
+            </div>
+            {{end}}
+        {{end}}
+        <form method="POST" action="/device">
+            {{template "csrf_field" .}}
+            <div class="form-group">
+                <label for="user_code">Code from your device</label>
+                <input type="text" class="device-code" id="user_code" name="user_code" value="{{.UserCode}}" placeholder="ABCD-EFGH" required autofocus>
+            </div>
+            <div class="actions">
+                <button class="deny" type="submit" name="action" value="deny">Deny</button>
+                <button class="approve" type="submit" name="action" value="approve">Approve</button>
+            </div>
+        </form>
+    {{end}}
+{{template "card_close" .}}
+{{template "brand_footer" .}}
