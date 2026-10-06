@@ -3,16 +3,17 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type DeviceCodeRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewDeviceCodeRepository(db *sql.DB) *DeviceCodeRepository {
+func NewDeviceCodeRepository(db database.SQL) *DeviceCodeRepository {
 	return &DeviceCodeRepository{db: db}
 }
 

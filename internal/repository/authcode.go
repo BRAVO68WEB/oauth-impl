@@ -3,15 +3,16 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type AuthCodeRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewAuthCodeRepository(db *sql.DB) *AuthCodeRepository {
+func NewAuthCodeRepository(db database.SQL) *AuthCodeRepository {
 	return &AuthCodeRepository{db: db}
 }
 
@@ -30,7 +31,7 @@ func (r *AuthCodeRepository) Save(code *models.AuthorizationCode) error {
 		string(scopes), code.Resource, code.Nonce,
 		code.CodeChallenge, code.CodeChallengeMethod,
 		code.FamilyID, code.SessionID, authTime,
-		code.ExpiresAt, code.Used,
+		code.ExpiresAt, boolInt(code.Used),
 	)
 	return err
 }
@@ -44,13 +45,14 @@ func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error)
 	var scopes string
 	var resource, nonce sql.NullString
 	var authTime sql.NullTime
+	var used bit
 
 	err := r.db.QueryRow(query, code).Scan(
 		&ac.Code, &ac.ClientID, &ac.UserID, &ac.RedirectURI,
 		&scopes, &resource, &nonce,
 		&ac.CodeChallenge, &ac.CodeChallengeMethod,
 		&ac.FamilyID, &ac.SessionID, &authTime,
-		&ac.ExpiresAt, &ac.Used,
+		&ac.ExpiresAt, &used,
 	)
 	if err != nil {
 		return nil, err
@@ -65,6 +67,7 @@ func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error)
 	if authTime.Valid {
 		ac.AuthTime = authTime.Time
 	}
+	ac.Used = used.Bool()
 
 	if err := json.Unmarshal([]byte(scopes), &ac.Scopes); err != nil {
 		return nil, err

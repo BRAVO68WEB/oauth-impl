@@ -1,18 +1,18 @@
 package repository
 
 import (
-	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type CIBARepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewCIBARepository(db *sql.DB) *CIBARepository {
+func NewCIBARepository(db database.SQL) *CIBARepository {
 	return &CIBARepository{db: db}
 }
 

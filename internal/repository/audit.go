@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,10 +22,10 @@ type AuditRow struct {
 }
 
 type AuditRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewAuditRepository(db *sql.DB) *AuditRepository {
+func NewAuditRepository(db database.SQL) *AuditRepository {
 	return &AuditRepository{db: db}
 }
 
@@ -62,11 +62,12 @@ func (r *AuditRepository) List(action, actorID string, since time.Time) ([]Audit
 	var out []AuditRow
 	for rows.Next() {
 		var row AuditRow
-		var raw, created string
+		var raw string
+		var created dbTime
 		if err := rows.Scan(&row.ID, &row.ActorType, &row.ActorID, &row.Action, &row.TargetType, &row.TargetID, &row.IP, &row.UserAgent, &raw, &created); err != nil {
 			return nil, err
 		}
-		row.CreatedAt = created
+		row.CreatedAt = created.Time.UTC().Format(time.RFC3339)
 		_ = json.Unmarshal([]byte(raw), &row.Metadata)
 		if action != "" && row.Action != action {
 			continue
@@ -74,11 +75,8 @@ func (r *AuditRepository) List(action, actorID string, since time.Time) ([]Audit
 		if actorID != "" && row.ActorID != actorID {
 			continue
 		}
-		if !since.IsZero() {
-			ts, err := time.Parse(time.RFC3339, created)
-			if err == nil && ts.Before(since) {
-				continue
-			}
+		if !since.IsZero() && created.Time.Before(since) {
+			continue
 		}
 		out = append(out, row)
 	}

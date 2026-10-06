@@ -1,16 +1,16 @@
 package repository
 
 import (
-	"database/sql"
+	"github.com/bravo68web/oauth-impl/internal/database"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type NonceRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewNonceRepository(db *sql.DB) *NonceRepository {
+func NewNonceRepository(db database.SQL) *NonceRepository {
 	return &NonceRepository{db: db}
 }
 

@@ -38,8 +38,9 @@ Key package boundaries:
 - `internal/auth/` - Bearer checks for `/api` and `/api/me`
 - `internal/handlers/oauth/` - Legacy OAuth handlers (being migrated)
 - `internal/handlers/oidc/` - OIDC handler (discovery, JWKS, UserInfo)
-- `internal/database/` - SQLite connection + migrations
-- `internal/queue/` - In-memory queue for CIBA/PAR
+- `internal/database/` - SQLite or Postgres connection + migrations
+- `internal/cache/` - Memory or Redis TTL cache (CIMD documents, DPoP replay)
+- `internal/queue/` - Memory or Redis queue for CIBA and device approval
 - `internal/config/` - YAML config with MFA settings
 - `internal/hashalgo/` - Operator password hasher (`algo.go` exports `Hash`)
 - `internal/models/` - Data models
@@ -84,10 +85,11 @@ go test ./... -v                   # All tests
 
 ## Key Quirks
 
-- **SQLite single-connection**: `database.go` sets `MaxOpenConns=1`
+- **SQLite single-connection**: `database.driver: sqlite` sets `MaxOpenConns=1`. `postgres` uses `database.dsn` and a pool of 10. `?` placeholders are rewritten to `$1` for Postgres. `migrations/*.sql` are records; `database.Migrate` is the live migrator.
+- **Redis**: `queue.type` and `cache.provider` stay `memory` unless `redis.addr` is set and the matching value is `redis`. Redis holds the CIBA/device approval queue, CIMD documents, and DPoP `jti` replay entries. It does not hold users or tokens.
 - **Password hashing**: `internal/hashalgo/algo.go` exports one function, `Hash() passhash.Hasher`. Default is bcrypt (`passhash.DefaultBcryptCost`). Login, register, `POST /api/users`, and the password grant all use `UserService`. `HASH_ALGO` and `security.hash_algo` must be `internal/hashalgo/algo.go`. Edit the file, then `just run` or `just build`. Startup refuses to serve when the file differs from the binary.
 - **Config load**: empty `-config` loads `./config.yaml` when it exists, otherwise built-in defaults. A `-config` path that is missing is fatal.
-- **CIBA queue polling**: Uses `MemoryQueue.Poll()` with channels
+- **CIBA queue polling**: `MemoryQueue.Poll()` uses a channel. `queue.type: redis` stores the same requests with a TTL of `expires_at` and approves them in one Redis script.
 - **OIDC key generation**: RSA + EC keys generated on startup
 - **Config defaults**: Server binds `0.0.0.0:8080`, SQLite at `./oauth.db`
 - **MFA**: TOTP with QR code rendering (PNG for web, ASCII for CLI)
@@ -162,4 +164,6 @@ Key external packages:
 - `github.com/golang-jwt/jwt/v5` - JWT handling
 - `github.com/spf13/cobra` - CLI framework
 - `modernc.org/sqlite` - SQLite driver
+- `github.com/jackc/pgx/v5` - Postgres driver
+- `github.com/redis/go-redis/v9` - Redis client
 - `golang.org/x/crypto` - bcrypt and argon2id password hashing

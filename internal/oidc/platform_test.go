@@ -30,7 +30,7 @@ func TestClaimMappingAndReservedSub(t *testing.T) {
 	cfg.OIDC.ClaimMappings = []config.ClaimMapping{{
 		Claim: "department", Source: "attr.department", Scopes: []string{"profile"},
 	}}
-	if err := repository.NewUserRepository(db.Conn()).Create(&models.User{
+	if err := repository.NewUserRepository(db).Create(&models.User{
 		ID: "user-1", Username: "ada", PasswordHash: "x",
 		Attributes: map[string]string{"department": "engineering"},
 		CreatedAt:  time.Now(),

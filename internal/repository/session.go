@@ -1,24 +1,24 @@
 package repository
 
 import (
-	"database/sql"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type SessionRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewSessionRepository(db *sql.DB) *SessionRepository {
+func NewSessionRepository(db database.SQL) *SessionRepository {
 	return &SessionRepository{db: db}
 }
 
 func (r *SessionRepository) Create(s *models.BrowserSession) error {
 	_, err := r.db.Exec(`INSERT INTO sessions (id, user_id, username, auth_time, mfa_verified, user_agent, ip, created_at, expires_at, revoked)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.UserID, s.Username, s.AuthTime, s.MFAVerified, s.UserAgent, s.IP, s.CreatedAt, s.ExpiresAt, s.Revoked,
+		s.ID, s.UserID, s.Username, s.AuthTime, boolInt(s.MFAVerified), s.UserAgent, s.IP, s.CreatedAt, s.ExpiresAt, boolInt(s.Revoked),
 	)
 	return err
 }
@@ -98,7 +98,7 @@ func (r *SessionRepository) RecordClient(sid, clientID string) error {
 	if sid == "" || clientID == "" {
 		return nil
 	}
-	_, err := r.db.Exec(`INSERT OR IGNORE INTO session_clients (sid, client_id) VALUES (?, ?)`, sid, clientID)
+	_, err := r.db.Exec(`INSERT INTO session_clients (sid, client_id) VALUES (?, ?) ON CONFLICT (sid, client_id) DO NOTHING`, sid, clientID)
 	return err
 }
 

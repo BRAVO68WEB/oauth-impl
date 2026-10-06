@@ -3,16 +3,17 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type ClientRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewClientRepository(db *sql.DB) *ClientRepository {
+func NewClientRepository(db database.SQL) *ClientRepository {
 	return &ClientRepository{db: db}
 }
 
@@ -40,10 +41,10 @@ func (r *ClientRepository) Create(client *models.Client) error {
 	_, err := r.db.Exec(query,
 		client.ID, client.Secret, client.Name,
 		string(redirectURIs), string(grantTypes), string(scopes),
-		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
-		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
+		client.TokenEndpointAuthMethod, boolInt(client.DPoPBoundAccessTokens),
+		boolInt(client.RequirePushedAuthorizationRequests), client.BackchannelTokenDeliveryMode,
 		client.BackchannelClientNotificationEndpoint, client.BackchannelAuthenticationRequestSigningAlg,
-		client.BackchannelLogoutURI, client.BackchannelLogoutSessionRequired, string(postLogout),
+		client.BackchannelLogoutURI, boolInt(client.BackchannelLogoutSessionRequired), string(postLogout),
 		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		source, boolInt(client.DCREnabled), boolInt(client.CIMDEnabled),
 		client.CreatedAt, client.UpdatedAt,
@@ -96,10 +97,10 @@ func (r *ClientRepository) Update(client *models.Client) error {
 	}
 	_, err := r.db.Exec(query,
 		client.Name, string(redirectURIs), string(grantTypes), string(scopes),
-		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
-		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
+		client.TokenEndpointAuthMethod, boolInt(client.DPoPBoundAccessTokens),
+		boolInt(client.RequirePushedAuthorizationRequests), client.BackchannelTokenDeliveryMode,
 		client.BackchannelClientNotificationEndpoint, client.BackchannelAuthenticationRequestSigningAlg,
-		client.BackchannelLogoutURI, client.BackchannelLogoutSessionRequired, string(postLogout),
+		client.BackchannelLogoutURI, boolInt(client.BackchannelLogoutSessionRequired), string(postLogout),
 		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		source, boolInt(client.DCREnabled), boolInt(client.CIMDEnabled),
 		time.Now(), client.ID,
@@ -127,11 +128,12 @@ func scanClient(scan func(dest ...any) error) (*models.Client, error) {
 	var redirectURIs, grantTypes, scopes, postLogout, source string
 	var jwks, jwksUri, reqObjAlg sql.NullString
 	var sessionRequired, dcrEnabled, cimdEnabled int
+	var dpopBound, requirePAR bit
 	if err := scan(
 		&client.ID, &client.Secret, &client.Name,
 		&redirectURIs, &grantTypes, &scopes,
-		&client.TokenEndpointAuthMethod, &client.DPoPBoundAccessTokens,
-		&client.RequirePushedAuthorizationRequests, &client.BackchannelTokenDeliveryMode,
+		&client.TokenEndpointAuthMethod, &dpopBound,
+		&requirePAR, &client.BackchannelTokenDeliveryMode,
 		&client.BackchannelClientNotificationEndpoint, &client.BackchannelAuthenticationRequestSigningAlg,
 		&client.BackchannelLogoutURI, &sessionRequired, &postLogout,
 		&jwks, &jwksUri, &reqObjAlg,
@@ -149,6 +151,8 @@ func scanClient(scan func(dest ...any) error) (*models.Client, error) {
 	if reqObjAlg.Valid {
 		client.RequestObjectSigningAlg = reqObjAlg.String
 	}
+	client.DPoPBoundAccessTokens = dpopBound.Bool()
+	client.RequirePushedAuthorizationRequests = requirePAR.Bool()
 	client.BackchannelLogoutSessionRequired = sessionRequired != 0
 	client.RegistrationSource = source
 	if client.RegistrationSource == "" {

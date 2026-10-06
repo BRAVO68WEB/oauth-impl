@@ -34,8 +34,20 @@ server:
     crl_file: ""
 
 database:
+  driver: sqlite
   path: "./oauth.db"
+  dsn: ""
   migrations: true
+
+redis:
+  addr: ""
+  username: ""
+  password: ""
+  db: 0
+  prefix: oauth
+
+cache:
+  provider: memory
 
 security:
   access_token_lifetime: 3600s

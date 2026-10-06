@@ -40,7 +40,7 @@ func TestRegisterDisabledCreatesNoUser(t *testing.T) {
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	conn := db.Conn()
+	conn := db
 	cfg := config.DefaultConfig()
 	cfg.Security.DisableRegistration = true
 	users := NewUserService(repository.NewUserRepository(conn), nil, &cfg.Security, passhash.Bcrypt(bcrypt.MinCost))
@@ -66,7 +66,7 @@ func TestResetAndLoginMail(t *testing.T) {
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	conn := db.Conn()
+	conn := db
 	cfg := config.DefaultConfig()
 	users := NewUserService(repository.NewUserRepository(conn), nil, &cfg.Security, passhash.Bcrypt(bcrypt.MinCost))
 	sessions := NewSessionService(repository.NewSessionRepository(conn), time.Hour)

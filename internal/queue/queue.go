@@ -48,6 +48,7 @@ type Queue interface {
 	Deny(id string, reason string) error
 	Count() int
 	StartCleanup(ctx context.Context, interval time.Duration)
+	Poll(ctx context.Context, interval time.Duration) <-chan *AuthRequest
 }
 
 type MemoryQueue struct {

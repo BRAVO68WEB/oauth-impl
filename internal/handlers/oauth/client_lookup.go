@@ -3,10 +3,10 @@ package oauth
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
@@ -15,40 +15,30 @@ import (
 
 const cimdTTL = 5 * time.Minute
 
-type cimdCache struct {
-	mu    sync.Mutex
-	items map[string]cimdCacheEntry
-}
-
-type cimdCacheEntry struct {
-	client  *models.Client
-	fetched time.Time
-}
-
-func newCIMDCache() *cimdCache {
-	return &cimdCache{items: map[string]cimdCacheEntry{}}
-}
-
-func (c *cimdCache) get(id string) (*models.Client, bool) {
-	if c == nil {
+func (h *Handler) cimdGet(id string) (*models.Client, bool) {
+	if h == nil || h.cimd == nil {
 		return nil, false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.items[id]
-	if !ok || time.Since(entry.fetched) > cimdTTL {
+	raw, ok, err := h.cimd.Get(context.Background(), "cimd:"+id)
+	if err != nil || !ok {
 		return nil, false
 	}
-	return entry.client, true
+	var client models.Client
+	if err := json.Unmarshal(raw, &client); err != nil {
+		return nil, false
+	}
+	return &client, true
 }
 
-func (c *cimdCache) put(client *models.Client) {
-	if c == nil || client == nil {
+func (h *Handler) cimdPut(client *models.Client) {
+	if h == nil || h.cimd == nil || client == nil {
 		return
 	}
-	c.mu.Lock()
-	c.items[client.ID] = cimdCacheEntry{client: client, fetched: time.Now()}
-	c.mu.Unlock()
+	raw, err := json.Marshal(client)
+	if err != nil {
+		return
+	}
+	_ = h.cimd.Set(context.Background(), "cimd:"+client.ID, raw, cimdTTL)
 }
 
 func (h *Handler) SetAudit(a *service.AuditLog) {
@@ -108,7 +98,7 @@ func (h *Handler) resolveCIMD(clientID, redirectURI string) (*models.Client, str
 	if err == nil && existing != nil && !existing.CIMDEnabled {
 		return nil, "invalid_client", "Client ID metadata document is disabled"
 	}
-	if cached, ok := h.cimd.get(clientID); ok {
+	if cached, ok := h.cimdGet(clientID); ok {
 		if redirectURI != "" && !containsString(cached.RedirectURIs, redirectURI) {
 			return nil, "invalid_request", "redirect_uri is not listed in the client metadata"
 		}
@@ -138,7 +128,7 @@ func (h *Handler) resolveCIMD(clientID, redirectURI string) (*models.Client, str
 			return nil, "server_error", "Failed to store client metadata"
 		}
 	}
-	h.cimd.put(client)
+	h.cimdPut(client)
 	if h.audit != nil {
 		h.audit.Write("system", "cimd", "client.cimd", "client", client.ID, nil, map[string]any{"name": client.Name})
 	}

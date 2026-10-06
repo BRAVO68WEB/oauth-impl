@@ -47,7 +47,7 @@ func TestWebhookFiltersAndSigns(t *testing.T) {
 	}))
 	defer receiver.Close()
 
-	hooks := NewWebhookDispatcher(repository.NewWebhookRepository(db.Conn()))
+	hooks := NewWebhookDispatcher(repository.NewWebhookRepository(db))
 	if _, err := hooks.Create(WebhookInput{URL: receiver.URL, Secret: "topsecret", Events: []string{EventLogin}}); err != nil {
 		t.Fatal(err)
 	}

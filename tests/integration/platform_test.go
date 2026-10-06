@@ -158,7 +158,7 @@ func TestCIMDFetchOnceThenDisabled(t *testing.T) {
 	if hits != 1 {
 		t.Fatalf("metadata fetches = %d", hits)
 	}
-	if _, err := db.Conn().Exec(`UPDATE clients SET cimd_enabled = 0 WHERE id = ?`, clientID); err != nil {
+	if _, err := db.Exec(`UPDATE clients SET cimd_enabled = 0 WHERE id = ?`, clientID); err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.Get(authorize)

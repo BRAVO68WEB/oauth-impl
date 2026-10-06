@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/bravo68web/oauth-impl/internal/branding"
+	"github.com/bravo68web/oauth-impl/internal/cache"
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
@@ -35,7 +36,7 @@ type Handler struct {
 	mtlsSvc      *service.MTLSService
 	jarSvc       *service.JARService
 	cfg          *config.Config
-	q            *queue.MemoryQueue
+	q            queue.Queue
 	oidcHandler  *oidc.Handler
 	userSvc      *service.UserService
 	sessions     *service.SessionService
@@ -45,7 +46,7 @@ type Handler struct {
 	hooks        *service.WebhookDispatcher
 	brandTheme   branding.Theme
 	audit        *service.AuditLog
-	cimd         *cimdCache
+	cimd         cache.Cache
 }
 
 type LoginRecorder interface {
@@ -74,7 +75,7 @@ func NewHandler(
 	mtlsSvc *service.MTLSService,
 	jarSvc *service.JARService,
 	cfg *config.Config,
-	q *queue.MemoryQueue,
+	q queue.Queue,
 	oidcHandler *oidc.Handler,
 	userSvc *service.UserService,
 	sessions *service.SessionService,
@@ -101,7 +102,7 @@ func NewHandler(
 		logout:       logout,
 		logins:       logins,
 		brandTheme:   branding.Prepare(cfg),
-		cimd:         newCIMDCache(),
+		cimd:         cache.NewMemory(),
 	}
 }
 
@@ -114,6 +115,12 @@ func (h *Handler) ClientName(id string) string {
 		return ""
 	}
 	return client.Name
+}
+
+func (h *Handler) SetCache(c cache.Cache) {
+	if h != nil && c != nil {
+		h.cimd = c
+	}
 }
 
 func (h *Handler) SetTemplates(t *template.Template) {

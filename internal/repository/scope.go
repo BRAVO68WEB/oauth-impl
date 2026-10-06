@@ -2,16 +2,17 @@ package repository
 
 import (
 	"database/sql"
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type ScopeRepository struct {
-	db *sql.DB
+	db database.SQL
 }
 
-func NewScopeRepository(db *sql.DB) *ScopeRepository {
+func NewScopeRepository(db database.SQL) *ScopeRepository {
 	return &ScopeRepository{db: db}
 }
 

@@ -42,7 +42,7 @@ func newTestUserService(t *testing.T, hasher passhash.Hasher) (*UserService, *re
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	repo := repository.NewUserRepository(db.Conn())
+	repo := repository.NewUserRepository(db)
 	cfg := config.DefaultConfig()
 	return NewUserService(repo, NewTOTPService(repo, &cfg.Security.MFA), &cfg.Security, hasher), repo
 }
