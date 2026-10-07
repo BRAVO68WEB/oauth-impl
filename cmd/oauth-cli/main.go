@@ -52,6 +52,7 @@ func main() {
 		analyticsCmd(),
 		auditCmd(),
 		keysCmd(),
+		orgCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

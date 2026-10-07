@@ -19,8 +19,8 @@ func NewAuthCodeRepository(db database.SQL) *AuthCodeRepository {
 func (r *AuthCodeRepository) Save(code *models.AuthorizationCode) error {
 	scopes, _ := json.Marshal(code.Scopes)
 	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, resource, nonce,
-		code_challenge, code_challenge_method, family_id, session_id, auth_time, expires_at, used)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		code_challenge, code_challenge_method, family_id, session_id, auth_time, expires_at, used, org_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	var authTime any
 	if !code.AuthTime.IsZero() {
@@ -31,14 +31,14 @@ func (r *AuthCodeRepository) Save(code *models.AuthorizationCode) error {
 		string(scopes), code.Resource, code.Nonce,
 		code.CodeChallenge, code.CodeChallengeMethod,
 		code.FamilyID, code.SessionID, authTime,
-		code.ExpiresAt, boolInt(code.Used),
+		code.ExpiresAt, boolInt(code.Used), code.OrgID,
 	)
 	return err
 }
 
 func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error) {
 	query := `SELECT code, client_id, user_id, redirect_uri, scopes, resource, nonce,
-		code_challenge, code_challenge_method, COALESCE(family_id, ''), COALESCE(session_id, ''), auth_time, expires_at, used
+		code_challenge, code_challenge_method, COALESCE(family_id, ''), COALESCE(session_id, ''), auth_time, expires_at, used, COALESCE(org_id, '')
 		FROM authorization_codes WHERE code = ?`
 
 	ac := &models.AuthorizationCode{}
@@ -52,7 +52,7 @@ func (r *AuthCodeRepository) Get(code string) (*models.AuthorizationCode, error)
 		&scopes, &resource, &nonce,
 		&ac.CodeChallenge, &ac.CodeChallengeMethod,
 		&ac.FamilyID, &ac.SessionID, &authTime,
-		&ac.ExpiresAt, &used,
+		&ac.ExpiresAt, &used, &ac.OrgID,
 	)
 	if err != nil {
 		return nil, err
