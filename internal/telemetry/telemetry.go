@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
+	"github.com/felixge/httpsnoop"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -65,8 +66,31 @@ func Setup(ctx context.Context, cfg *config.TelemetryConfig) (func(context.Conte
 // logs the trace and span ids after the handler returns.
 func Middleware(next http.Handler) http.Handler {
 	named := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec := &capture{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
+		var snippet bytes.Buffer
+		status := http.StatusOK
+		sawHeader := false
+		wrapped := httpsnoop.Wrap(w, httpsnoop.Hooks{
+			WriteHeader: func(nextHeader httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+				return func(code int) {
+					if !sawHeader {
+						status = code
+						sawHeader = true
+					}
+					nextHeader(code)
+				}
+			},
+			Write: func(nextWrite httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+				return func(p []byte) (int, error) {
+					if !sawHeader {
+						status = http.StatusOK
+						sawHeader = true
+					}
+					rememberPrefix(&snippet, p)
+					return nextWrite(p)
+				}
+			},
+		})
+		next.ServeHTTP(wrapped, r)
 		span := trace.SpanFromContext(r.Context())
 		if !span.IsRecording() {
 			return
@@ -83,12 +107,12 @@ func Middleware(next http.Handler) http.Handler {
 		if org := r.URL.Query().Get("organization"); org != "" {
 			attrs = append(attrs, attribute.String("org_id", org))
 		}
-		if code := oauthError(rec.body.Bytes()); code != "" {
+		if code := oauthError(snippet.Bytes()); code != "" {
 			attrs = append(attrs, attribute.String("oauth.error", code))
 		}
 		span.SetAttributes(attrs...)
 		sc := span.SpanContext()
-		log.Printf("%s %s status=%d trace_id=%s span_id=%s", r.Method, r.URL.Path, rec.status, sc.TraceID(), sc.SpanID())
+		log.Printf("%s %s status=%d trace_id=%s span_id=%s", r.Method, r.URL.Path, status, sc.TraceID(), sc.SpanID())
 	})
 	return otelhttp.NewMiddleware("http.request",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
@@ -146,45 +170,15 @@ func oauthError(body []byte) string {
 	return payload.Error
 }
 
-type capture struct {
-	http.ResponseWriter
-	status int
-	body   bytes.Buffer
-	wrote  bool
-}
-
-func (c *capture) WriteHeader(status int) {
-	if c.wrote {
+func rememberPrefix(dst *bytes.Buffer, p []byte) {
+	if dst.Len() >= 512 {
 		return
 	}
-	c.status = status
-	c.wrote = true
-	c.ResponseWriter.WriteHeader(status)
-}
-
-func (c *capture) Write(p []byte) (int, error) {
-	if !c.wrote {
-		c.WriteHeader(http.StatusOK)
+	remain := 512 - dst.Len()
+	if len(p) > remain {
+		p = p[:remain]
 	}
-	if c.body.Len() < 512 {
-		remain := 512 - c.body.Len()
-		if len(p) < remain {
-			c.body.Write(p)
-		} else {
-			c.body.Write(p[:remain])
-		}
-	}
-	return c.ResponseWriter.Write(p)
-}
-
-func (c *capture) Flush() {
-	if f, ok := c.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (c *capture) Unwrap() http.ResponseWriter {
-	return c.ResponseWriter
+	_, _ = dst.Write(p)
 }
 
 // Tracer is the process tracer. Tests and handlers use it when they need a child span.
