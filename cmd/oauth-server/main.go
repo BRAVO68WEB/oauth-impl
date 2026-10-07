@@ -233,10 +233,13 @@ func main() {
 	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler, userSvc, sessionSvc, logoutSvc, accountSvc)
 	oauthHandler.SetCache(store)
 	oauthHandler.SetWebhooks(hooks)
+	orgs := service.NewOrgService(repository.NewOrgRepository(conn), cfg)
+	oauthHandler.SetOrgs(orgs)
 
 	// Controllers
 	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo, accountSvc, sessionSvc, tokenRepo)
 	auditLog := service.NewAuditLog(repository.NewAuditRepository(conn))
+	mgmtCtrl.SetOrgs(orgs)
 	mgmtCtrl.SetWebhooks(hooks)
 	mgmtCtrl.SetAudit(auditLog)
 	mgmtCtrl.SetKeys(oidcHandler.GetKeySet(), cfg.OIDC.KeyRetain)

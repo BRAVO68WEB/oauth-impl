@@ -181,6 +181,7 @@ func (r *Router) setupRoutes() {
 	})
 
 	MountBrowserExtras(r.mux, r.accountCtrl, r.oauthHandler)
+	MountOrgSelector(r.mux, r.webCtrl)
 
 	r.mux.Route("/mfa", func(r2 chi.Router) {
 		r2.Get("/enroll", r.webCtrl.HandleMFAEnrollPage)

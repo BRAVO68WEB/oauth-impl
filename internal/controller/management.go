@@ -30,6 +30,7 @@ type ManagementController struct {
 	audit        *service.AuditLog
 	keys         *oidc.KeySet
 	keyRetain    time.Duration
+	orgs         *service.OrgService
 }
 
 func (c *ManagementController) SetAudit(a *service.AuditLog) {

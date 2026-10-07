@@ -1,0 +1,97 @@
+package service
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/bravo68web/oauth-impl/internal/config"
+	"github.com/bravo68web/oauth-impl/internal/database"
+	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/repository"
+)
+
+func TestOrgResolveHonorsFlags(t *testing.T) {
+	db, err := database.New(filepath.Join(t.TempDir(), "org.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.NewOrgRepository(db)
+	cfg := &config.Config{}
+	svc := NewOrgService(repo, cfg)
+	user := &models.User{ID: "user-1", Email: "ada@acme.example"}
+	client := &models.Client{ID: "app"}
+
+	if choice, err := svc.Resolve(client, user, ""); err != nil || choice != nil {
+		t.Fatalf("disabled choice=%v err=%v", choice, err)
+	}
+	if _, err := svc.Resolve(client, user, "acme"); err != ErrOrgDisabled {
+		t.Fatalf("disabled request err=%v", err)
+	}
+
+	cfg.Org.Enabled = true
+	org, err := svc.Create("Acme", "acme", []string{"acme.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddMember(org.ID, user.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if choice, err := svc.Resolve(client, user, ""); err != nil || choice != nil {
+		t.Fatalf("no autolookup choice=%v err=%v", choice, err)
+	}
+	cfg.Org.EnabledDomainBasedAutolookup = true
+	choice, err := svc.Resolve(client, user, "")
+	if err != nil || choice == nil || choice.Slug != "acme" {
+		t.Fatalf("autolookup choice=%v err=%v", choice, err)
+	}
+	stranger := &models.User{ID: "user-2", Email: "bea@acme.example"}
+	if choice, err := svc.Resolve(client, stranger, ""); err != nil || choice != nil {
+		t.Fatalf("non-member autolookup choice=%v err=%v", choice, err)
+	}
+	if _, err := svc.Resolve(client, stranger, "acme"); err != ErrOrgDenied {
+		t.Fatalf("explicit non-member err=%v", err)
+	}
+	bound := &models.Client{ID: "bound", OrgID: org.ID}
+	if _, err := svc.Resolve(bound, stranger, ""); err != ErrOrgDenied {
+		t.Fatalf("bound non-member err=%v", err)
+	}
+	got, err := svc.Resolve(bound, user, "")
+	if err != nil || got.ID != org.ID {
+		t.Fatalf("bound member choice=%v err=%v", got, err)
+	}
+	if _, err := svc.Resolve(bound, user, "other"); err != ErrOrgInvalid {
+		t.Fatalf("wrong org err=%v", err)
+	}
+	single, err := svc.NeedsChoice(client, user.ID, "")
+	if err != nil || single {
+		t.Fatalf("single membership needs=%v err=%v", single, err)
+	}
+	second, err := svc.Create("Beta", "beta", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddMember(second.ID, user.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	needs, err := svc.NeedsChoice(client, user.ID, "")
+	if err != nil || !needs {
+		t.Fatalf("needs choice=%v err=%v", needs, err)
+	}
+	needs, err = svc.NeedsChoice(client, user.ID, "acme")
+	if err != nil || needs {
+		t.Fatalf("named org should not ask, needs=%v err=%v", needs, err)
+	}
+	needs, err = svc.NeedsChoice(bound, user.ID, "")
+	if err != nil || needs {
+		t.Fatalf("bound client should not ask, needs=%v err=%v", needs, err)
+	}
+	if domain, err := NormalizeDomain(" ACME.Example "); err != nil || domain != "acme.example" {
+		t.Fatalf("domain=%s err=%v", domain, err)
+	}
+	_ = time.Now()
+}

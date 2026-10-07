@@ -151,7 +151,7 @@ const clientSelect = `SELECT id, secret, name, redirect_uris, grant_types, scope
 	COALESCE(subject_type, 'public'), COALESCE(sector_identifier_uri, ''),
 	COALESCE(id_token_encrypted_response_alg, ''), COALESCE(id_token_encrypted_response_enc, ''),
 	COALESCE(userinfo_encrypted_response_alg, ''), COALESCE(userinfo_encrypted_response_enc, ''),
-	created_at, updated_at
+	created_at, updated_at, COALESCE(org_id, '')
 	FROM clients`
 
 func scanClient(scan func(dest ...any) error) (*models.Client, error) {
@@ -172,7 +172,7 @@ func scanClient(scan func(dest ...any) error) (*models.Client, error) {
 		&client.SubjectType, &client.SectorIdentifierURI,
 		&client.IDTokenEncryptedResponseAlg, &client.IDTokenEncryptedResponseEnc,
 		&client.UserinfoEncryptedResponseAlg, &client.UserinfoEncryptedResponseEnc,
-		&client.CreatedAt, &client.UpdatedAt,
+		&client.CreatedAt, &client.UpdatedAt, &client.OrgID,
 	); err != nil {
 		return nil, err
 	}
