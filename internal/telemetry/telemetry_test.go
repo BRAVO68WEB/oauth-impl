@@ -41,7 +41,7 @@ func TestTokenRequestSpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, response.Body)
 
 	spans := exp.GetSpans()
