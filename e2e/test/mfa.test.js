@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const { startServer } = require("../support/server");
 const { pkcePair, shortID } = require("../support/pkce");
 const { createUser, createClient, tokenRequest, decodeJwt } = require("../support/oauth");
-const { newPage, authorize, closeBrowser } = require("../support/browser");
+const { newPage, authorize, closeBrowser, callbackURL } = require("../support/browser");
 
 describe("MFA enrollment", function () {
   let server;
@@ -23,16 +23,17 @@ describe("MFA enrollment", function () {
 
   it("enrolls TOTP during the authorization code flow", async function () {
     const user = await createUser(server, { username: shortID("mfa") });
+    const redirectURI = await callbackURL();
     const client = await createClient(server, {
       name: "MFA",
-      redirect_uris: ["http://localhost/cb"],
+      redirect_uris: [redirectURI],
       grant_types: ["authorization_code"],
       scopes: ["openid", "profile"],
     });
     const pkce = pkcePair();
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", client.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid profile");
     url.searchParams.set("code_challenge", pkce.challenge);
@@ -42,7 +43,7 @@ describe("MFA enrollment", function () {
     const issued = await tokenRequest(server.base, {
       grant_type: "authorization_code",
       code: callback.searchParams.get("code"),
-      redirect_uri: "http://localhost/cb",
+      redirect_uri: redirectURI,
       code_verifier: pkce.verifier,
     }, { id: client.id, secret: client.secret });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));
