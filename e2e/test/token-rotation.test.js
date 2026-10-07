@@ -4,18 +4,20 @@ const { pkcePair, shortID } = require("../support/pkce");
 const {
   createUser, createClient, tokenRequest, readBody, jwtHeader, managementToken,
 } = require("../support/oauth");
-const { newPage, authorize, closeBrowser } = require("../support/browser");
+const { newPage, authorize, closeBrowser, callbackURL } = require("../support/browser");
 
 describe("token rotation", function () {
   let server;
   let user;
   let passwordApp;
   let web;
+  let redirectURI;
 
   before(async function () {
     this.timeout(60000);
     server = await startServer();
     user = await createUser(server, { username: shortID("rotate") });
+    redirectURI = await callbackURL();
     passwordApp = await createClient(server, {
       name: "Refresh",
       grant_types: ["password", "refresh_token"],
@@ -23,7 +25,7 @@ describe("token rotation", function () {
     });
     web = await createClient(server, {
       name: "Web",
-      redirect_uris: ["http://localhost/cb"],
+      redirect_uris: [redirectURI],
       grant_types: ["authorization_code", "refresh_token"],
       scopes: ["openid", "profile"],
     });
@@ -71,7 +73,7 @@ describe("token rotation", function () {
     const pkce = pkcePair();
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", web.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid profile");
     url.searchParams.set("code_challenge", pkce.challenge);
@@ -80,7 +82,7 @@ describe("token rotation", function () {
     const issued = await tokenRequest(server.base, {
       grant_type: "authorization_code",
       code: callback.searchParams.get("code"),
-      redirect_uri: "http://localhost/cb",
+      redirect_uri: redirectURI,
       code_verifier: pkce.verifier,
     }, { id: web.id, secret: web.secret });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));

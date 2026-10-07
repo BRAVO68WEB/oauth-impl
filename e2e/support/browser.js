@@ -1,7 +1,30 @@
+const http = require("node:http");
 const { chromium } = require("playwright");
 const { TOTP, Secret } = require("otpauth");
 
 let browser;
+let callbackServer;
+let callbackPromise;
+
+// Chromium does not pause http://localhost navigations for page.route, so a
+// redirect to port 80 fails in CI where nothing is listening. Serve /cb on an
+// ephemeral port and force localhost onto 127.0.0.1.
+function callbackURL() {
+  if (!callbackPromise) {
+    callbackPromise = new Promise((resolve, reject) => {
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end("<h1>callback</h1>");
+      });
+      callbackServer = server;
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        resolve(`http://localhost:${server.address().port}/cb`);
+      });
+    });
+  }
+  return callbackPromise;
+}
 
 function isCallback(current) {
   let parsed;
@@ -32,7 +55,10 @@ function isStep(current) {
 async function ensureBrowser() {
   if (!browser) {
     const headed = process.env.HEADED === "1" || process.env.HEADLESS === "false";
-    browser = await chromium.launch({ headless: !headed });
+    browser = await chromium.launch({
+      headless: !headed,
+      args: ["--host-resolver-rules=MAP localhost 127.0.0.1"],
+    });
   }
   return browser;
 }
@@ -42,23 +68,18 @@ async function closeBrowser() {
     await browser.close();
     browser = null;
   }
+  if (callbackServer) {
+    const server = callbackServer;
+    callbackServer = null;
+    callbackPromise = null;
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
 
 async function newPage() {
   const instance = await ensureBrowser();
   const context = await instance.newContext();
   const page = await context.newPage();
-  let origin = "";
-  page.on("request", (request) => {
-    try {
-      const parsed = new URL(request.url());
-      if (parsed.hostname === "127.0.0.1") {
-        origin = parsed.origin;
-      }
-    } catch {
-      // Ignore malformed URLs from the browser.
-    }
-  });
   page.on("response", (response) => {
     if (!response.headers()["set-cookie"]) {
       return;
@@ -68,33 +89,6 @@ async function newPage() {
         page._oauthCookies = cookies;
       }
     }).catch(() => {});
-  });
-  // The OAuth host is 127.0.0.1 and the allowed callback is http://localhost.
-  // Land back on the OAuth host so the session cookie stays on a same-site document.
-  await page.route(/\/e2e-callback(?:\?|#|$)/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "text/html",
-      body: "<h1>callback</h1>",
-    });
-  });
-  await page.route(/http:\/\/localhost\/cb/, async (route) => {
-    const incoming = new URL(route.request().url());
-    if (!origin) {
-      await route.fulfill({
-        status: 200,
-        contentType: "text/html",
-        body: "<h1>callback</h1>",
-      });
-      return;
-    }
-    const back = new URL("/e2e-callback", origin);
-    back.search = incoming.search;
-    await route.fulfill({
-      status: 302,
-      headers: { location: back.toString() },
-      body: "",
-    });
   });
   return page;
 }
@@ -190,4 +184,5 @@ module.exports = {
   submitLogin,
   authorize,
   waitForCallback,
+  callbackURL,
 };
