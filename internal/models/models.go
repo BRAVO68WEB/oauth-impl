@@ -32,6 +32,7 @@ type Client struct {
 	IDTokenEncryptedResponseEnc                string    `json:"id_token_encrypted_response_enc,omitempty"`
 	UserinfoEncryptedResponseAlg               string    `json:"userinfo_encrypted_response_alg,omitempty"`
 	UserinfoEncryptedResponseEnc               string    `json:"userinfo_encrypted_response_enc,omitempty"`
+	OrgID                                      string    `json:"org_id,omitempty"`
 	CreatedAt                                  time.Time `json:"created_at"`
 	UpdatedAt                                  time.Time `json:"updated_at"`
 }
@@ -64,8 +65,24 @@ type AuthorizationCode struct {
 	FamilyID            string    `json:"-"`
 	SessionID           string    `json:"-"`
 	AuthTime            time.Time `json:"-"`
+	OrgID               string    `json:"org_id,omitempty"`
 	ExpiresAt           time.Time `json:"expires_at"`
 	Used                bool      `json:"used"`
+}
+
+type Organization struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Domains   []string  `json:"domains,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OrgMembership struct {
+	OrgID     string    `json:"org_id"`
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type AccessToken struct {

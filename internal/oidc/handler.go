@@ -98,11 +98,15 @@ type IDTokenClaims struct {
 	Picture           string `json:"picture,omitempty"`
 	SID               string `json:"sid,omitempty"`
 	Sub               string `json:"sub"`
+	OrgID             string `json:"org_id,omitempty"`
+	OrgSlug           string `json:"org_slug,omitempty"`
 }
 
 type IDTokenExtra struct {
 	SID      string
 	AuthTime time.Time
+	OrgID    string
+	OrgSlug  string
 }
 
 func (h *Handler) CreateIDToken(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (string, error) {
@@ -133,7 +137,7 @@ func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes 
 
 // CreateAccessTokenJWT signs an access token with the active RSA key.
 // Callers still store the compact token so revocation and UserInfo keep working.
-func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string, lifetime time.Duration) (string, error) {
+func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string, lifetime time.Duration, orgID, orgSlug string) (string, error) {
 	if h == nil || h.keySet == nil {
 		return "", fmt.Errorf("signing keys are not loaded")
 	}
@@ -162,6 +166,12 @@ func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string
 		"client_id":  clientID,
 		"scope":      scope,
 		"token_type": tokenType,
+	}
+	if orgID != "" {
+		claims["org_id"] = orgID
+	}
+	if orgSlug != "" {
+		claims["org_slug"] = orgSlug
 	}
 	key, kid := h.keySet.GetRSAKey()
 	if key == nil {
@@ -212,6 +222,12 @@ func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string
 		if !ex.AuthTime.IsZero() {
 			claims["auth_time"] = ex.AuthTime.Unix()
 		}
+		if ex.OrgID != "" {
+			claims["org_id"] = ex.OrgID
+		}
+		if ex.OrgSlug != "" {
+			claims["org_slug"] = ex.OrgSlug
+		}
 		for key, value := range applyClaimMappings(mappings, user, scopes) {
 			claims[key] = value
 		}
@@ -227,9 +243,11 @@ func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 		},
-		Sub:   sub,
-		Nonce: nonce,
-		SID:   ex.SID,
+		Sub:     sub,
+		Nonce:   nonce,
+		SID:     ex.SID,
+		OrgID:   ex.OrgID,
+		OrgSlug: ex.OrgSlug,
 	}
 	if !ex.AuthTime.IsZero() {
 		claims.AuthTime = ex.AuthTime.Unix()
@@ -293,6 +311,13 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	response := map[string]interface{}{
 		"sub": sub,
+	}
+	if at.OrgID != "" {
+		response["org_id"] = at.OrgID
+		var slug string
+		if err := h.db.QueryRow(`SELECT slug FROM organizations WHERE id = ?`, at.OrgID).Scan(&slug); err == nil && slug != "" {
+			response["org_slug"] = slug
+		}
 	}
 	mappings := []config.ClaimMapping{}
 	if h.cfg != nil {

@@ -48,6 +48,16 @@ func MountManagementExtras(api chi.Router, mgmt *controller.ManagementController
 	api.Post("/webhooks/{id}/test", mgmt.HandleTestWebhook)
 	api.Get("/audit", mgmt.HandleListAudit)
 	api.Post("/keys/rotate", mgmt.HandleRotateKeys)
+	api.Get("/orgs", mgmt.HandleListOrgs)
+	api.Post("/orgs", mgmt.HandleCreateOrg)
+	api.Get("/orgs/{orgID}", mgmt.HandleGetOrg)
+	api.Post("/orgs/{orgID}/domains", mgmt.HandleAddOrgDomain)
+	api.Post("/orgs/{orgID}/members", mgmt.HandleAddOrgMember)
+}
+
+func MountOrgSelector(r chi.Router, web *controller.WebController) {
+	r.Get("/organization", web.HandleOrgSelectPage)
+	r.Post("/organization", web.HandleOrgSelect)
 }
 
 func MountBrowserExtras(r chi.Router, account *controller.AccountController, oauthHandler *oauth.Handler) {

@@ -129,6 +129,8 @@ func New(cfg *config.Config, db *database.DB, q queue.Queue) (*Server, error) {
 	oidc.StartRotation(oidcHandler.GetKeySet(), cfg.OIDC.KeyRotationInterval, cfg.OIDC.KeyRetain)
 	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler, userSvc, sessionSvc, logoutSvc, accountSvc)
 	oauthHandler.SetWebhooks(hooks)
+	orgs := service.NewOrgService(repository.NewOrgRepository(conn), cfg)
+	oauthHandler.SetOrgs(orgs)
 	pages, err := controller.ParseTemplates(root.TemplateFS, cfg.Branding.Templates)
 	if err != nil {
 		return nil, err
@@ -138,6 +140,7 @@ func New(cfg *config.Config, db *database.DB, q queue.Queue) (*Server, error) {
 	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
 	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo, accountSvc, sessionSvc, tokenRepo)
 	auditLog := service.NewAuditLog(repository.NewAuditRepository(conn))
+	mgmtCtrl.SetOrgs(orgs)
 	mgmtCtrl.SetWebhooks(hooks)
 	mgmtCtrl.SetAudit(auditLog)
 	mgmtCtrl.SetKeys(oidcHandler.GetKeySet(), cfg.OIDC.KeyRetain)
@@ -261,6 +264,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	})
 
 	route.MountBrowserExtras(r, s.accountCtrl, s.oauthHandler)
+	route.MountOrgSelector(r, s.webCtrl)
 
 	r.Get("/branding/assets/{name}", s.webCtrl.ServeBrandAsset)
 	r.Get("/login/social/{provider}/callback", s.webCtrl.HandleSocialCallback)
