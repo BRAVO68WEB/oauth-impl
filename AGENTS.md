@@ -115,7 +115,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 | Device Code | `/oauth/device` + `/oauth/token` | Working |
 | CIBA (Poll mode) | `/oauth/bc-authorize` + `/oauth/token` | Working |
 | PAR | `/oauth/par` | Working |
-| Token Introspection | `/oauth/introspect` | Working |
+| Token Introspection | `/oauth/introspect` | Working. Confidential clients only. A client sees its own tokens, tokens whose `resource` is that client, or any token when it is the global management client. |
 | Token Revocation | `/oauth/revoke` | Working |
 | Dynamic Registration | `/oauth/register` | Working |
 | OIDC Discovery | `/.well-known/openid-configuration` | Working |

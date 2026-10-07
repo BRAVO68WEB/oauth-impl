@@ -2,12 +2,14 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"strings"
+	"time"
+
 	"github.com/bravo68web/oauth-impl/internal/database"
-
-	"github.com/google/uuid"
-
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/google/uuid"
 )
 
 type TokenRepository struct {
@@ -19,30 +21,40 @@ func NewTokenRepository(db database.SQL) *TokenRepository {
 }
 
 func (r *TokenRepository) SaveAccessToken(token *models.AccessToken) error {
+	if token.IssuedAt.IsZero() {
+		token.IssuedAt = time.Now().UTC()
+	}
+	if token.JTI == "" {
+		token.JTI = compactJTI(token.Token)
+	}
 	scopes, _ := json.Marshal(token.Scopes)
-	query := `INSERT INTO access_tokens (token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO access_tokens (token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked, resource, iat, jti, org_id, act)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
 		token.Token, token.ClientID, token.UserID,
 		string(scopes), token.TokenType, token.DPoPJKT,
 		token.ExpiresAt, boolInt(token.Revoked),
+		token.Resource, token.IssuedAt, token.JTI, token.OrgID, token.Act,
 	)
 	return err
 }
 
 func (r *TokenRepository) GetAccessToken(token string) (*models.AccessToken, error) {
-	query := `SELECT token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked
+	query := `SELECT token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked,
+		COALESCE(resource, ''), iat, COALESCE(jti, ''), COALESCE(org_id, ''), COALESCE(act, '')
 		FROM access_tokens WHERE token = ?`
 
 	at := &models.AccessToken{}
 	var scopes string
 	var revoked bit
+	var issued dbTime
 
 	err := r.db.QueryRow(query, token).Scan(
 		&at.Token, &at.ClientID, &at.UserID,
 		&scopes, &at.TokenType, &at.DPoPJKT,
 		&at.ExpiresAt, &revoked,
+		&at.Resource, &issued, &at.JTI, &at.OrgID, &at.Act,
 	)
 	if err != nil {
 		return nil, err
@@ -52,6 +64,7 @@ func (r *TokenRepository) GetAccessToken(token string) (*models.AccessToken, err
 		return nil, err
 	}
 	at.Revoked = revoked.Bool()
+	at.IssuedAt = issued.Time
 	return at, nil
 }
 
@@ -67,13 +80,17 @@ func (r *TokenRepository) SaveRefreshToken(token *models.RefreshToken) error {
 	if token.FamilyID == "" {
 		token.FamilyID = uuid.NewString()
 	}
+	if token.IssuedAt.IsZero() {
+		token.IssuedAt = time.Now().UTC()
+	}
 	scopes, _ := json.Marshal(token.Scopes)
-	query := `INSERT INTO refresh_tokens (id, token, access_token, client_id, user_id, scopes, family_id, expires_at, revoked)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO refresh_tokens (id, token, access_token, client_id, user_id, scopes, family_id, expires_at, revoked, resource, iat, jti, org_id, act)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
 		token.ID, token.Token, token.AccessToken, token.ClientID,
 		token.UserID, string(scopes), token.FamilyID, token.ExpiresAt, boolInt(token.Revoked),
+		token.Resource, token.IssuedAt, token.JTI, token.OrgID, token.Act,
 	)
 	return err
 }
@@ -83,9 +100,11 @@ func scanRefresh(scan func(dest ...any) error) (*models.RefreshToken, error) {
 	var scopes string
 	var id, family, userID sql.NullString
 	var revoked bit
+	var issued dbTime
 	if err := scan(
 		&id, &rt.Token, &rt.AccessToken, &rt.ClientID,
 		&userID, &scopes, &family, &rt.ExpiresAt, &revoked,
+		&rt.Resource, &issued, &rt.JTI, &rt.OrgID, &rt.Act,
 	); err != nil {
 		return nil, err
 	}
@@ -93,13 +112,32 @@ func scanRefresh(scan func(dest ...any) error) (*models.RefreshToken, error) {
 	rt.FamilyID = family.String
 	rt.UserID = userID.String
 	rt.Revoked = revoked.Bool()
+	rt.IssuedAt = issued.Time
 	if err := json.Unmarshal([]byte(scopes), &rt.Scopes); err != nil {
 		return nil, err
 	}
 	return rt, nil
 }
 
-const refreshColumns = `COALESCE(id, ''), token, COALESCE(access_token, ''), client_id, user_id, scopes, COALESCE(family_id, ''), expires_at, revoked`
+const refreshColumns = `COALESCE(id, ''), token, COALESCE(access_token, ''), client_id, user_id, scopes, COALESCE(family_id, ''), expires_at, revoked, COALESCE(resource, ''), iat, COALESCE(jti, ''), COALESCE(org_id, ''), COALESCE(act, '')`
+
+func compactJTI(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		JTI string `json:"jti"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return ""
+	}
+	return claims.JTI
+}
 
 func (r *TokenRepository) GetRefreshToken(token string) (*models.RefreshToken, error) {
 	return scanRefresh(r.db.QueryRow(`SELECT `+refreshColumns+` FROM refresh_tokens WHERE token = ?`, token).Scan)

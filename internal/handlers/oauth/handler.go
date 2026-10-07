@@ -47,6 +47,7 @@ type Handler struct {
 	brandTheme   branding.Theme
 	audit        *service.AuditLog
 	cimd         cache.Cache
+	introspect   *service.Introspector
 }
 
 type LoginRecorder interface {
@@ -103,6 +104,7 @@ func NewHandler(
 		logins:       logins,
 		brandTheme:   branding.Prepare(cfg),
 		cimd:         cache.NewMemory(),
+		introspect:   service.NewIntrospector(tokenRepo, userRepo, cfg),
 	}
 }
 
@@ -1374,57 +1376,27 @@ func (h *Handler) HandleIntrospect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := r.Form.Get("token")
-	if token == "" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"active": false})
-		return
-	}
-
 	clientID, clientSecret, ok := r.BasicAuth()
 	if !ok {
 		clientID = r.Form.Get("client_id")
 		clientSecret = r.Form.Get("client_secret")
 	}
-
 	client, err := h.clientRepo.GetByID(clientID)
-	if err != nil {
+	if err != nil || client == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 		return
 	}
-
 	if client.TokenEndpointAuthMethod != "none" && client.Secret != clientSecret {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 		return
 	}
 
-	at, err := h.tokenRepo.GetAccessToken(token)
+	result, err := h.introspect.Introspect(client, r.Form.Get("token"), r.Form.Get("token_type_hint"))
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"active": false})
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 		return
 	}
-
-	if at.Revoked || time.Now().After(at.ExpiresAt) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"active": false})
-		return
-	}
-
-	response := map[string]interface{}{
-		"active":     true,
-		"scope":      strings.Join(at.Scopes, " "),
-		"client_id":  at.ClientID,
-		"token_type": at.TokenType,
-		"exp":        at.ExpiresAt.Unix(),
-		"iat":        at.ExpiresAt.Add(-h.cfg.Security.AccessTokenLifetime).Unix(),
-	}
-
-	if at.UserID != "" {
-		response["sub"] = at.UserID
-		if user, err := h.userRepo.GetByID(at.UserID); err == nil {
-			response["username"] = user.Username
-		}
-	}
-
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {

@@ -70,6 +70,10 @@ type AccessToken struct {
 	Resource  string    `json:"resource,omitempty"`
 	TokenType string    `json:"token_type"`
 	DPoPJKT   string    `json:"dpop_jkt,omitempty"`
+	IssuedAt  time.Time `json:"iat,omitempty"`
+	JTI       string    `json:"jti,omitempty"`
+	OrgID     string    `json:"org_id,omitempty"`
+	Act       string    `json:"act,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Revoked   bool      `json:"revoked"`
 }
@@ -83,6 +87,10 @@ type RefreshToken struct {
 	Scopes      []string  `json:"scopes"`
 	Resource    string    `json:"resource,omitempty"`
 	FamilyID    string    `json:"family_id,omitempty"`
+	IssuedAt    time.Time `json:"iat,omitempty"`
+	JTI         string    `json:"jti,omitempty"`
+	OrgID       string    `json:"org_id,omitempty"`
+	Act         string    `json:"act,omitempty"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	Revoked     bool      `json:"revoked"`
 }

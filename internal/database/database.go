@@ -393,6 +393,14 @@ func (db *DB) Migrate() error {
 		`ALTER TABLE clients ADD COLUMN dcr_enabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE clients ADD COLUMN cimd_enabled INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE ciba_requests ADD COLUMN scopes TEXT`,
+		`ALTER TABLE access_tokens ADD COLUMN iat DATETIME`,
+		`ALTER TABLE access_tokens ADD COLUMN jti TEXT`,
+		`ALTER TABLE access_tokens ADD COLUMN org_id TEXT`,
+		`ALTER TABLE access_tokens ADD COLUMN act TEXT`,
+		`ALTER TABLE refresh_tokens ADD COLUMN iat DATETIME`,
+		`ALTER TABLE refresh_tokens ADD COLUMN jti TEXT`,
+		`ALTER TABLE refresh_tokens ADD COLUMN org_id TEXT`,
+		`ALTER TABLE refresh_tokens ADD COLUMN act TEXT`,
 	}
 	for _, alter := range alters {
 		if _, err := db.Exec(alter); err != nil && db.driver == "postgres" && !isDuplicateColumn(err) {
