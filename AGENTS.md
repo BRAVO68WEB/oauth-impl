@@ -83,6 +83,8 @@ go test ./tests/integration/... -v # Integration tests
 go test ./... -v                   # All tests
 ```
 
+The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker must be available because that suite starts Postgres with testcontainers.
+
 ## Key Quirks
 
 - **SQLite single-connection**: `database.driver: sqlite` sets `MaxOpenConns=1`. `postgres` uses `database.dsn` and a pool of 10. `?` placeholders are rewritten to `$1` for Postgres. `migrations/*.sql` are records; `database.Migrate` is the live migrator.

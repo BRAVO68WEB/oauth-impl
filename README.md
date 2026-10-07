@@ -568,7 +568,7 @@ npx playwright install chromium
 npm test
 ```
 
-`e2e/` starts Postgres with testcontainers (`e2e/pgserve`) and then starts `oauth-server` in separate modes: standard grants, CIBA, refresh and signing-key rotation, webhooks, brute-force detection, password complexity, required PKCE, closed registration, MFA enrollment, forced DPoP, CIMD, and JWT access tokens (`security.access_token_format: jwt`). The default access token format stays `opaque`.
+`e2e/` starts Postgres with testcontainers (`e2e/pgserve`) and then starts `oauth-server` in separate modes. The same `npm test` command is the `E2E` check on every pull request. The suite covers: standard grants, CIBA, refresh and signing-key rotation, webhooks, brute-force detection, password complexity, required PKCE, closed registration, MFA enrollment, forced DPoP, CIMD, and JWT access tokens (`security.access_token_format: jwt`). The default access token format stays `opaque`.
 
 ## Database and Redis
 
