@@ -146,6 +146,20 @@
             font-size: 0.82rem;
         }
         .or::before, .or::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+        .org-list { display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; text-align: left; }
+        .org-choice {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 12px 14px;
+            cursor: pointer;
+        }
+        .org-choice:has(input:checked) { border-color: var(--brand-primary); }
+        .org-choice input { width: auto; height: auto; margin: 0; }
+        .org-choice strong { display: block; }
+        .org-choice span span { color: var(--muted); font-size: 0.85rem; }
         .social a {
             display: flex;
             align-items: center;
@@ -259,5 +273,8 @@
         <input type="hidden" name="prompt" value="{{.Prompt}}">
         <input type="hidden" name="login_hint" value="{{.LoginHint}}">
         <input type="hidden" name="resource" value="{{.Resource}}">
+        <input type="hidden" name="response_mode" value="{{.ResponseMode}}">
+        <input type="hidden" name="request" value="{{.Request}}">
+        <input type="hidden" name="organization" value="{{.Organization}}">
         <input type="hidden" name="next" value="{{.Next}}">
 {{end}}

@@ -190,6 +190,9 @@ func extractOAuthParams(r *http.Request) map[string]string {
 		"prompt":                r.URL.Query().Get("prompt"),
 		"login_hint":            r.URL.Query().Get("login_hint"),
 		"resource":              r.URL.Query().Get("resource"),
+		"response_mode":         r.URL.Query().Get("response_mode"),
+		"request":               r.URL.Query().Get("request"),
+		"organization":          r.URL.Query().Get("organization"),
 		"next":                  r.URL.Query().Get("next"),
 	}
 }
@@ -209,6 +212,9 @@ func extractOAuthParamsFromForm(r *http.Request) map[string]string {
 		"prompt":                r.FormValue("prompt"),
 		"login_hint":            r.FormValue("login_hint"),
 		"resource":              r.FormValue("resource"),
+		"response_mode":         r.FormValue("response_mode"),
+		"request":               r.FormValue("request"),
+		"organization":          r.FormValue("organization"),
 		"next":                  r.FormValue("next"),
 	}
 }
@@ -228,6 +234,9 @@ func oauthTemplateData(params map[string]string, extra map[string]interface{}) m
 		"Prompt":              params["prompt"],
 		"LoginHint":           params["login_hint"],
 		"Resource":            params["resource"],
+		"ResponseMode":        params["response_mode"],
+		"Request":             params["request"],
+		"Organization":        params["organization"],
 		"Next":                params["next"],
 	}
 	for k, v := range extra {
@@ -550,6 +559,112 @@ func (c *WebController) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	// Registration successful → redirect to login with OAuth params preserved
 	loginURL := "/login?" + r.Form.Encode()
 	http.Redirect(w, r, loginURL, http.StatusFound)
+}
+
+// ──────────────────────────────────────────────
+// Organization selector
+// ──────────────────────────────────────────────
+
+func (c *WebController) HandleOrgSelectPage(w http.ResponseWriter, r *http.Request) {
+	session := c.getSession(r)
+	if session == nil || !session.Authenticated {
+		http.Redirect(w, r, "/login?"+r.URL.RawQuery, http.StatusFound)
+		return
+	}
+	params := c.oauthParams(r, false)
+	needs, err := c.oauthHandler.NeedsOrgChoice(params["client_id"], session.UserID, params["organization"])
+	if err != nil {
+		c.renderOrganization(w, r, params, session.Username, nil, "Could not load organizations")
+		return
+	}
+	if !needs {
+		http.Redirect(w, r, c.buildAuthorizeURL(params), http.StatusFound)
+		return
+	}
+	orgs, err := c.oauthHandler.UserOrgs(session.UserID)
+	if err != nil {
+		c.renderOrganization(w, r, params, session.Username, nil, "Could not load organizations")
+		return
+	}
+	if len(orgs) < 2 {
+		http.Redirect(w, r, c.buildAuthorizeURL(params), http.StatusFound)
+		return
+	}
+	c.renderOrganization(w, r, params, session.Username, orgs, "")
+}
+
+func (c *WebController) HandleOrgSelect(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	if !csrfOK(r) {
+		rejectCSRF(w)
+		return
+	}
+	session := c.getSession(r)
+	if session == nil || !session.Authenticated {
+		http.Redirect(w, r, "/login?"+r.Form.Encode(), http.StatusFound)
+		return
+	}
+	params := extractOAuthParamsFromForm(r)
+	chosen := postedOrganization(r)
+	orgs, err := c.oauthHandler.UserOrgs(session.UserID)
+	if err != nil {
+		c.renderOrganization(w, r, params, session.Username, orgs, "Could not load organizations")
+		return
+	}
+	var match *models.Organization
+	for _, org := range orgs {
+		if org.Slug == chosen || org.ID == chosen {
+			match = org
+			break
+		}
+	}
+	if match == nil {
+		c.renderOrganization(w, r, params, session.Username, orgs, "Choose an organization you belong to")
+		return
+	}
+	params["organization"] = match.Slug
+	http.Redirect(w, r, c.buildAuthorizeURL(params), http.StatusFound)
+}
+
+func (c *WebController) renderOrganization(w http.ResponseWriter, r *http.Request, params map[string]string, username string, orgs []*models.Organization, message string) {
+	if orgs == nil {
+		orgs = []*models.Organization{}
+	}
+	c.renderPage(w, r, "organization.html", "Organization", "Choose an organization", params, map[string]any{
+		"Username": username,
+		"Orgs":     orgs,
+		"Error":    message,
+	})
+}
+
+// postedOrganization returns the last non-empty organization value.
+// The shared hidden field is submitted before the selected radio button.
+func postedOrganization(r *http.Request) string {
+	chosen := ""
+	for _, value := range r.Form["organization"] {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			chosen = value
+		}
+	}
+	return chosen
+}
+
+func (c *WebController) oauthParams(r *http.Request, fromForm bool) map[string]string {
+	params := extractOAuthParams(r)
+	if fromForm {
+		params = extractOAuthParamsFromForm(r)
+	}
+	if requestURI := params["request_uri"]; requestURI != "" && c.oauthHandler != nil {
+		if par, err := c.oauthHandler.GetPARParams(requestURI); err == nil {
+			for k, v := range par {
+				if params[k] == "" {
+					params[k] = v
+				}
+			}
+		}
+	}
+	return params
 }
 
 // ──────────────────────────────────────────────

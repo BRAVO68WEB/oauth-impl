@@ -360,6 +360,15 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeOAuthError(w, http.StatusFound, "consent_required", "User consent required", state)
 			return
 		}
+		needs, err := h.needsOrgChoice(client, session.UserID, organization)
+		if err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to load organizations", state)
+			return
+		}
+		if needs {
+			writeOAuthError(w, http.StatusFound, "interaction_required", "Organization selection required", state)
+			return
+		}
 		// Proceed directly
 		h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization)
 		return
@@ -390,6 +399,16 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if !session.MFAVerified && h.cfg.Security.MFA.Required {
 		mfaURL := "/login/mfa?" + r.URL.RawQuery
 		http.Redirect(w, r, mfaURL, http.StatusFound)
+		return
+	}
+
+	needs, err := h.needsOrgChoice(client, session.UserID, organization)
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to load organizations", state)
+		return
+	}
+	if needs {
+		http.Redirect(w, r, "/organization?"+r.URL.RawQuery, http.StatusFound)
 		return
 	}
 
@@ -1640,6 +1659,32 @@ func (h *Handler) issueAccessTokenFor(clientID, userID, scope, tokenType, orgID,
 		return h.oidcHandler.CreateAccessTokenJWT(clientID, userID, scope, tokenType, lifetime, orgID, orgSlug)
 	}
 	return crypto.GenerateToken()
+}
+
+func (h *Handler) needsOrgChoice(client *models.Client, userID, requested string) (bool, error) {
+	if h == nil || h.orgs == nil {
+		return false, nil
+	}
+	return h.orgs.NeedsChoice(client, userID, requested)
+}
+
+// NeedsOrgChoice reports whether /organization should be shown for this
+// authorize request. clientID is loaded when it names a real client.
+func (h *Handler) NeedsOrgChoice(clientID, userID, requested string) (bool, error) {
+	var client *models.Client
+	if h != nil && clientID != "" {
+		if loaded, code, _ := h.resolveClient(clientID, ""); code == "" {
+			client = loaded
+		}
+	}
+	return h.needsOrgChoice(client, userID, requested)
+}
+
+func (h *Handler) UserOrgs(userID string) ([]*models.Organization, error) {
+	if h == nil || h.orgs == nil {
+		return nil, nil
+	}
+	return h.orgs.ListForUser(userID)
 }
 
 func (h *Handler) orgSlug(orgID string) string {

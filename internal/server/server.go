@@ -264,6 +264,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	})
 
 	route.MountBrowserExtras(r, s.accountCtrl, s.oauthHandler)
+	route.MountOrgSelector(r, s.webCtrl)
 
 	r.Get("/branding/assets/{name}", s.webCtrl.ServeBrandAsset)
 	r.Get("/login/social/{provider}/callback", s.webCtrl.HandleSocialCallback)
