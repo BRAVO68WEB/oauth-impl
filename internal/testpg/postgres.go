@@ -13,9 +13,7 @@ import (
 
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/database"
-	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // Instance is one Postgres container shared by a process.
@@ -48,8 +46,10 @@ func launch(ctx context.Context) (*Instance, error) {
 		postgres.WithDatabase("oauth"),
 		postgres.WithUsername("oauth"),
 		postgres.WithPassword("oauth"),
+		// BasicWaitStrategies waits until Postgres logs that it is ready, then
+		// until the port is open. Replacing that with a port-only wait reports
+		// ready while the server still rejects connections with SQLSTATE 57P03.
 		postgres.BasicWaitStrategies(),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp").WithStartupTimeout(2*time.Minute)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("start postgres: %w", err)
