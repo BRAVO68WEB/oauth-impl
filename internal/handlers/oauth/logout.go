@@ -1,9 +1,9 @@
 package oauth
 
 import (
+	"html"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -93,21 +93,25 @@ func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		client, err := h.clientRepo.GetByID(clientID)
-		if err != nil || !containsString(client.PostLogoutRedirectURIs, redirectURI) {
+		if err != nil || client == nil || !isValidRedirectURI(redirectURI, client.PostLogoutRedirectURIs) || len(client.PostLogoutRedirectURIs) == 0 {
 			h.renderLogout(w, r, values, "post_logout_redirect_uri is not registered")
 			return
 		}
-		target := redirectURI
-		if state != "" {
-			u, err := url.Parse(redirectURI)
-			if err == nil {
-				q := u.Query()
-				q.Set("state", state)
-				u.RawQuery = q.Encode()
-				target = u.String()
-			}
+		u, err := url.Parse(redirectURI)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			h.renderLogout(w, r, values, "post_logout_redirect_uri is not registered")
+			return
 		}
-		http.Redirect(w, r, target, http.StatusFound)
+		if state != "" {
+			q := u.Query()
+			q.Set("state", state)
+			u.RawQuery = q.Encode()
+		}
+		if isValidRedirectURI(redirectURI, client.PostLogoutRedirectURIs) {
+			http.Redirect(w, r, u.String(), http.StatusFound)
+			return
+		}
+		h.renderLogout(w, r, values, "post_logout_redirect_uri is not registered")
 		return
 	}
 
@@ -132,14 +136,14 @@ func (h *Handler) renderLogout(w http.ResponseWriter, r *http.Request, values ur
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><h1>Sign out</h1><p>` + templateEscape(errMsg) + `</p>
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><h1>Sign out</h1><p>` + html.EscapeString(errMsg) + `</p>
 <form method="POST" action="/oauth/logout">
-<input type="hidden" name="csrf_token" value="` + templateEscape(data["CSRFToken"].(string)) + `">
+<input type="hidden" name="csrf_token" value="` + html.EscapeString(data["CSRFToken"].(string)) + `">
 <input type="hidden" name="confirm" value="yes">
-<input type="hidden" name="id_token_hint" value="` + templateEscape(values.Get("id_token_hint")) + `">
-<input type="hidden" name="client_id" value="` + templateEscape(values.Get("client_id")) + `">
-<input type="hidden" name="post_logout_redirect_uri" value="` + templateEscape(values.Get("post_logout_redirect_uri")) + `">
-<input type="hidden" name="state" value="` + templateEscape(values.Get("state")) + `">
+<input type="hidden" name="id_token_hint" value="` + html.EscapeString(values.Get("id_token_hint")) + `">
+<input type="hidden" name="client_id" value="` + html.EscapeString(values.Get("client_id")) + `">
+<input type="hidden" name="post_logout_redirect_uri" value="` + html.EscapeString(values.Get("post_logout_redirect_uri")) + `">
+<input type="hidden" name="state" value="` + html.EscapeString(values.Get("state")) + `">
 <button type="submit">Sign out</button>
 </form></body></html>`))
 }
@@ -181,9 +185,4 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func templateEscape(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
-	return r.Replace(s)
 }

@@ -28,6 +28,8 @@ type DPoPProof struct {
 	HTU   string `json:"htu"`
 	ATH   string `json:"ath,omitempty"`
 	Nonce string `json:"nonce,omitempty"`
+	// JKT is the thumbprint of the key that verified this proof. It is not a claim.
+	JKT string `json:"-"`
 }
 
 type DPoPJWK struct {
@@ -129,10 +131,16 @@ func (s *DPoPService) ValidateDPoPProof(dpopHeader string, method string, uri st
 		return nil, err
 	}
 
+	thumbprint, err := s.GetPublicKeyThumbprint(pubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get thumbprint: %w", err)
+	}
+
 	return &DPoPProof{
 		HTM: htm,
 		HTU: htu,
 		ATH: ath,
+		JKT: thumbprint,
 	}, nil
 }
 
@@ -335,38 +343,4 @@ func (s *DPoPService) GetCertificateThumbprint(cert *x509.Certificate) string {
 func (s *DPoPService) BindTokenToCertificate(token string, certThumbprint string) string {
 	// This would be stored with the token in production
 	return certThumbprint
-}
-
-// GetJKTFromProof extracts the JKT (JWK Thumbprint) from a DPoP proof
-func (s *DPoPService) GetJKTFromProof(dpopHeader string) (string, error) {
-	if dpopHeader == "" {
-		return "", fmt.Errorf("DPoP header is required")
-	}
-
-	// Parse without verification to get the header
-	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	token, _, err := parser.ParseUnverified(dpopHeader, &DPoPProof{})
-	if err != nil {
-		return "", fmt.Errorf("failed to parse DPoP proof: %w", err)
-	}
-
-	// Get the JWK from header
-	jwkRaw, ok := token.Header["jwk"].(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("missing jwk in DPoP header")
-	}
-
-	// Parse the public key to get thumbprint
-	pubKey, err := s.parseJWK(jwkRaw)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse JWK: %w", err)
-	}
-
-	// Get the thumbprint
-	thumbprint, err := s.GetPublicKeyThumbprint(pubKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to get thumbprint: %w", err)
-	}
-
-	return thumbprint, nil
 }

@@ -51,6 +51,9 @@ logs/
 *.pem
 *.key
 *.crt
+# CIMD end-to-end metadata server. Not a deployment certificate.
+!e2e/fixtures/cimd.crt
+!e2e/fixtures/cimd.key
 
 # Documentation build
 docs/site/

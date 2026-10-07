@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -44,6 +45,9 @@ func New(cfg config.SMTPConfig) (Mailer, error) {
 func (m *smtpMailer) Enabled() bool { return true }
 
 func (m *smtpMailer) Send(to, subject, text string) error {
+	if err := validMailHeaders(to, m.cfg.From, subject); err != nil {
+		return err
+	}
 	addr := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
 	var conn net.Conn
 	var err error
@@ -92,4 +96,18 @@ func (m *smtpMailer) Send(to, subject, text string) error {
 		return err
 	}
 	return client.Quit()
+}
+
+// validMailHeaders rejects header values that could add extra SMTP headers.
+func validMailHeaders(to, from, subject string) error {
+	if strings.ContainsAny(to, "\r\n") || strings.ContainsAny(from, "\r\n") || strings.ContainsAny(subject, "\r\n") {
+		return fmt.Errorf("mail header contains a newline")
+	}
+	if _, err := mail.ParseAddress(to); err != nil {
+		return fmt.Errorf("invalid recipient")
+	}
+	if _, err := mail.ParseAddress(from); err != nil {
+		return fmt.Errorf("invalid from address")
+	}
+	return nil
 }

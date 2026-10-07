@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 
@@ -56,7 +55,7 @@ func AssetExists(dir, name string) bool {
 	return true
 }
 
-func openAsset(dir, name string) (*os.File, string, error) {
+func openAsset(dir, name string) (io.ReadCloser, string, error) {
 	if !safeAssetName(name) {
 		return nil, "", os.ErrNotExist
 	}
@@ -64,36 +63,43 @@ func openAsset(dir, name string) (*os.File, string, error) {
 	if ctype == "" {
 		return nil, "", os.ErrNotExist
 	}
-	root, err := filepath.Abs(dir)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, "", err
 	}
-	root, err = filepath.EvalSymlinks(root)
+	f, err := root.Open(name)
 	if err != nil {
+		_ = root.Close()
 		return nil, "", err
 	}
-	full := filepath.Join(root, name)
-	resolved, err := filepath.EvalSymlinks(full)
+	info, err := f.Stat()
 	if err != nil {
+		_ = f.Close()
+		_ = root.Close()
 		return nil, "", err
 	}
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil || !filepath.IsLocal(rel) {
-		return nil, "", os.ErrNotExist
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return nil, "", err
-	}
-	if info.IsDir() {
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		_ = f.Close()
+		_ = root.Close()
 		return nil, "", os.ErrNotExist
 	}
 	if info.Size() > config.MaxBrandAssetBytes {
+		_ = f.Close()
+		_ = root.Close()
 		return nil, "", errTooLarge
 	}
-	f, err := os.Open(resolved)
-	if err != nil {
-		return nil, "", err
+	return &rootedFile{ReadCloser: f, root: root}, ctype, nil
+}
+
+type rootedFile struct {
+	io.ReadCloser
+	root *os.Root
+}
+
+func (f *rootedFile) Close() error {
+	err := f.ReadCloser.Close()
+	if closeErr := f.root.Close(); err == nil {
+		err = closeErr
 	}
-	return f, ctype, nil
+	return err
 }
