@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
@@ -704,11 +705,11 @@ func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request) {
 </form>
 </body>
 </html>`,
-		r.URL.Query().Get("client_id"),
-		r.URL.Query().Get("redirect_uri"),
-		r.URL.Query().Get("response_type"),
-		r.URL.Query().Get("scope"),
-		r.URL.Query().Get("state"),
+		html.EscapeString(r.URL.Query().Get("client_id")),
+		html.EscapeString(r.URL.Query().Get("redirect_uri")),
+		html.EscapeString(r.URL.Query().Get("response_type")),
+		html.EscapeString(r.URL.Query().Get("scope")),
+		html.EscapeString(r.URL.Query().Get("state")),
 	)
 }
 
