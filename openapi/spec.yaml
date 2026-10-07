@@ -993,7 +993,7 @@ paths:
                   ]
                 token_endpoint_auth_signing_alg_values_supported:
                   ["RS256", "ES256"]
-                subject_types_supported: ["public"]
+                subject_types_supported: ["public", "pairwise"]
                 id_token_signing_alg_values_supported: ["RS256", "ES256"]
                 code_challenge_methods_supported: ["S256", "plain"]
                 claims_supported:
@@ -2854,8 +2854,27 @@ components:
           example: 1718000000
         sub:
           type: string
-          description: Subject (user ID)
+          description: Subject identifier for this client
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
+        iss:
+          type: string
+          description: Issuer identifier
+        aud:
+          type: string
+          description: Resource indicator when the token has one, otherwise the client id
+        nbf:
+          type: integer
+          description: Not-before time (Unix timestamp)
+        jti:
+          type: string
+          description: Token identifier when the token has one
+        org_id:
+          type: string
+          description: Organization id when the token was issued for an organization
+        act:
+          type: object
+          description: Actor claim for delegation or impersonation (RFC 8693)
+          additionalProperties: true
 
     # ── Device ──
 

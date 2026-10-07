@@ -35,6 +35,13 @@ type CreateClientInput struct {
 	PostLogoutRedirectURIs                     []string
 	DCREnabled                                 bool
 	CIMDEnabled                                bool
+	SubjectType                                string
+	SectorIdentifierURI                        string
+	JWKS                                       string
+	IDTokenEncryptedResponseAlg                string
+	IDTokenEncryptedResponseEnc                string
+	UserinfoEncryptedResponseAlg               string
+	UserinfoEncryptedResponseEnc               string
 }
 
 func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, error) {
@@ -75,8 +82,18 @@ func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, e
 		RegistrationSource:                         "management",
 		DCREnabled:                                 input.DCREnabled,
 		CIMDEnabled:                                input.CIMDEnabled,
+		SubjectType:                                input.SubjectType,
+		SectorIdentifierURI:                        input.SectorIdentifierURI,
+		JWKS:                                       input.JWKS,
+		IDTokenEncryptedResponseAlg:                input.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:                input.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg:               input.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc:               input.UserinfoEncryptedResponseEnc,
 		CreatedAt:                                  time.Now(),
 		UpdatedAt:                                  time.Now(),
+	}
+	if err := ValidateSubjectType(client); err != nil {
+		return nil, err
 	}
 
 	if err := s.clientRepo.Create(client); err != nil {
@@ -95,6 +112,9 @@ func (s *ClientService) ListClients() ([]*models.Client, error) {
 }
 
 func (s *ClientService) UpdateClient(client *models.Client) error {
+	if err := ValidateSubjectType(client); err != nil {
+		return err
+	}
 	client.UpdatedAt = time.Now()
 	return s.clientRepo.Update(client)
 }

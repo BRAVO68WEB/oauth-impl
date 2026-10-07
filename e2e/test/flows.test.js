@@ -144,6 +144,10 @@ describe("standard OAuth flows", function () {
 
     const active = await introspect(server.base, web, refreshed.body.access_token);
     assert.equal(active.body.active, true);
+    assert.equal(active.body.sub, user.id);
+    assert.equal(active.body.iss, server.base);
+    assert.equal(typeof active.body.iat, "number");
+    assert.ok(active.body.iat <= active.body.exp);
     const revoked = await revoke(server.base, web, refreshed.body.access_token);
     assert.equal(revoked.status, 200);
     const inactive = await introspect(server.base, web, refreshed.body.access_token);

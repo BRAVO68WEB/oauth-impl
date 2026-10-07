@@ -25,6 +25,17 @@ type Config struct {
 	Branding     BrandingConfig     `yaml:"branding"`
 	Social       SocialConfig       `yaml:"social"`
 	Registration RegistrationConfig `yaml:"registration"`
+	Telemetry    TelemetryConfig    `yaml:"telemetry"`
+}
+
+// TelemetryConfig controls OpenTelemetry traces. Enabled is false unless
+// the operator sets it, so a default server does not dial a collector.
+type TelemetryConfig struct {
+	Enabled      bool    `yaml:"enabled"`
+	ServiceName  string  `yaml:"service_name"`
+	OTLPEndpoint string  `yaml:"otlp_endpoint"`
+	Insecure     bool    `yaml:"insecure"`
+	SampleRatio  float64 `yaml:"sample_ratio"`
 }
 
 type ServerConfig struct {
@@ -215,6 +226,7 @@ type OIDCConfig struct {
 	ClaimMappings        []ClaimMapping `yaml:"claim_mappings"`
 	KeyRotationInterval  time.Duration  `yaml:"key_rotation_interval"`
 	KeyRetain            time.Duration  `yaml:"key_retain"`
+	PairwiseSalt         string         `yaml:"pairwise_salt"`
 }
 
 func DefaultConfig() *Config {
@@ -319,6 +331,10 @@ func DefaultConfig() *Config {
 				"self_signed_tls_client_auth",
 			},
 		},
+		Telemetry: TelemetryConfig{
+			ServiceName: "oauth-server",
+			SampleRatio: 1,
+		},
 	}
 }
 
@@ -398,6 +414,12 @@ func (c *Config) Normalize() {
 	if b.ShowForgotPassword == nil {
 		v := true
 		b.ShowForgotPassword = &v
+	}
+	if c.Telemetry.ServiceName == "" {
+		c.Telemetry.ServiceName = "oauth-server"
+	}
+	if c.Telemetry.SampleRatio == 0 {
+		c.Telemetry.SampleRatio = 1
 	}
 }
 
@@ -631,6 +653,14 @@ func ValidatePlatform(cfg *Config) error {
 	}
 	if (cfg.Cache.Provider == "redis" || cfg.Queue.Type == "redis") && strings.TrimSpace(cfg.Redis.Addr) == "" {
 		return fmt.Errorf("redis.addr is required when cache.provider or queue.type is redis")
+	}
+	if cfg.Telemetry.Enabled {
+		if strings.TrimSpace(cfg.Telemetry.OTLPEndpoint) == "" {
+			return fmt.Errorf("telemetry.otlp_endpoint is required when telemetry.enabled is true")
+		}
+		if cfg.Telemetry.SampleRatio <= 0 || cfg.Telemetry.SampleRatio > 1 {
+			return fmt.Errorf("telemetry.sample_ratio must be greater than 0 and at most 1")
+		}
 	}
 	for _, m := range cfg.OIDC.ClaimMappings {
 		if m.Claim == "" || reservedClaims[m.Claim] {

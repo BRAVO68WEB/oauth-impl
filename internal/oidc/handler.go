@@ -1,11 +1,13 @@
 package oidc
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,16 +15,19 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/bravo68web/oauth-impl/internal/cache"
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
 )
 
 type Handler struct {
-	db        *database.DB
-	cfg       *config.Config
-	keySet    *KeySet
-	checkDPoP func(header, method, uri, accessToken string) error
+	db          *database.DB
+	cfg         *config.Config
+	keySet      *KeySet
+	checkDPoP   func(header, method, uri, accessToken string) error
+	fetchSector func(ctx context.Context, rawURL string) ([]byte, error)
+	sectorCache cache.Cache
 }
 
 func (h *Handler) SetDPoPCheck(fn func(header, method, uri, accessToken string) error) {
@@ -101,13 +106,29 @@ type IDTokenExtra struct {
 }
 
 func (h *Handler) CreateIDToken(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (string, error) {
+	claims, err := h.identityClaims(clientID, userID, nonce, scopes, extra...)
+	if err != nil {
+		return "", err
+	}
 	key, kid := h.keySet.GetRSAKey()
-	return signIDToken(jwt.SigningMethodRS256, kid, key, h.identityClaims(clientID, userID, nonce, scopes, extra...))
+	signed, err := signIDToken(jwt.SigningMethodRS256, kid, key, claims)
+	if err != nil {
+		return "", err
+	}
+	return h.sealIDToken(clientID, signed)
 }
 
 func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (string, error) {
+	claims, err := h.identityClaims(clientID, userID, nonce, scopes, extra...)
+	if err != nil {
+		return "", err
+	}
 	key, kid := h.keySet.GetECKey()
-	return signIDToken(jwt.SigningMethodES256, kid, key, h.identityClaims(clientID, userID, nonce, scopes, extra...))
+	signed, err := signIDToken(jwt.SigningMethodES256, kid, key, claims)
+	if err != nil {
+		return "", err
+	}
+	return h.sealIDToken(clientID, signed)
 }
 
 // CreateAccessTokenJWT signs an access token with the active RSA key.
@@ -122,9 +143,9 @@ func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string
 	if tokenType == "" {
 		tokenType = "Bearer"
 	}
-	sub := userID
-	if sub == "" {
-		sub = clientID
+	sub, err := h.SubjectFor(clientID, userID)
+	if err != nil {
+		return "", err
 	}
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
@@ -155,7 +176,7 @@ func signIDToken(method jwt.SigningMethod, kid string, key any, claims jwt.Claim
 	return token.SignedString(key)
 }
 
-func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) jwt.Claims {
+func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (jwt.Claims, error) {
 	var ex IDTokenExtra
 	if len(extra) > 0 {
 		ex = extra[0]
@@ -169,10 +190,14 @@ func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string
 	if h.cfg != nil {
 		mappings = h.cfg.OIDC.ClaimMappings
 	}
+	sub, err := h.SubjectFor(clientID, userID)
+	if err != nil {
+		return nil, err
+	}
 	if len(mappings) > 0 {
 		claims := jwt.MapClaims{
 			"iss": h.issuer(),
-			"sub": userID,
+			"sub": sub,
 			"aud": clientID,
 			"exp": now.Add(time.Hour).Unix(),
 			"iat": now.Unix(),
@@ -190,19 +215,19 @@ func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string
 		for key, value := range applyClaimMappings(mappings, user, scopes) {
 			claims[key] = value
 		}
-		return claims
+		return claims, nil
 	}
 
 	claims := IDTokenClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    h.issuer(),
-			Subject:   userID,
+			Subject:   sub,
 			Audience:  jwt.ClaimStrings{clientID},
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 		},
-		Sub:   userID,
+		Sub:   sub,
 		Nonce: nonce,
 		SID:   ex.SID,
 	}
@@ -223,7 +248,7 @@ func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string
 			}
 		}
 	}
-	return claims
+	return claims, nil
 }
 
 func (h *Handler) HandleJWKS(w http.ResponseWriter, r *http.Request) {
@@ -261,8 +286,13 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sub, err := h.SubjectFor(at.ClientID, user.ID)
+	if err != nil {
+		writeOIDCError(w, http.StatusInternalServerError, "server_error", "Failed to resolve subject")
+		return
+	}
 	response := map[string]interface{}{
-		"sub": user.ID,
+		"sub": sub,
 	}
 	mappings := []config.ClaimMapping{}
 	if h.cfg != nil {
@@ -293,6 +323,16 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sealed, encrypted, err := h.sealUserInfo(at.ClientID, response)
+	if err != nil {
+		writeOIDCError(w, http.StatusBadRequest, "invalid_client", "Failed to encrypt UserInfo")
+		return
+	}
+	if encrypted {
+		w.Header().Set("Content-Type", "application/jwt")
+		_, _ = io.WriteString(w, sealed)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 }
@@ -363,8 +403,12 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"grant_types_supported":                            h.cfg.OIDC.SupportedGrantTypes,
 		"token_endpoint_auth_methods_supported":            h.cfg.OIDC.SupportedAuthMethods,
 		"token_endpoint_auth_signing_alg_values_supported": []string{"RS256", "ES256"},
-		"subject_types_supported":                          []string{"public"},
+		"subject_types_supported":                          []string{"public", "pairwise"},
 		"id_token_signing_alg_values_supported":            []string{"RS256", "ES256"},
+		"id_token_encryption_alg_values_supported":         []string{encAlgRSAOAEP256},
+		"id_token_encryption_enc_values_supported":         []string{encA256GCM},
+		"userinfo_encryption_alg_values_supported":         []string{encAlgRSAOAEP256},
+		"userinfo_encryption_enc_values_supported":         []string{encA256GCM},
 		"code_challenge_methods_supported":                 []string{"S256", "plain"},
 		"claims_supported":                                 h.cfg.OIDC.SupportedClaims,
 		"claims_parameter_supported":                       true,

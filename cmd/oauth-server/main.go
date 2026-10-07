@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/route"
 	"github.com/bravo68web/oauth-impl/internal/service"
+	"github.com/bravo68web/oauth-impl/internal/telemetry"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -80,6 +83,17 @@ func main() {
 	if err := service.ValidateTrustedProxies(cfg.Security.TrustedProxies); err != nil {
 		log.Fatalf("trusted proxies: %v", err)
 	}
+	shutdownTrace, err := telemetry.Setup(context.Background(), &cfg.Telemetry)
+	if err != nil {
+		log.Fatalf("telemetry: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), telemetry.ShutdownTimeout)
+		defer cancel()
+		if err := shutdownTrace(ctx); err != nil {
+			log.Printf("telemetry shutdown: %v", err)
+		}
+	}()
 	hasher, err := hashalgo.Prepare(wd, os.Getenv("HASH_ALGO"), cfg.Security.HashAlgo)
 	if err != nil {
 		log.Fatalf("password hasher: %v", err)
@@ -114,6 +128,15 @@ func main() {
 	conn := db
 	if err := service.SeedManagementClient(repository.NewClientRepository(conn), cfg); err != nil {
 		log.Fatalf("management client: %v", err)
+	}
+	if strings.TrimSpace(cfg.OIDC.PairwiseSalt) == "" {
+		n, err := repository.NewClientRepository(conn).CountPairwise()
+		if err != nil {
+			log.Fatalf("pairwise clients: %v", err)
+		}
+		if n > 0 {
+			log.Fatal("oidc.pairwise_salt is required when a client uses subject_type pairwise")
+		}
 	}
 
 	// Repositories
@@ -154,6 +177,17 @@ func main() {
 	if cfg.Cache.Provider == "redis" {
 		store = cache.NewRedis(rdb, cfg.Redis.Prefix)
 	}
+	oidcHandler.SetSectorCache(store)
+	oidcHandler.SetSectorFetch(func(ctx context.Context, rawURL string) ([]byte, error) {
+		body, status, err := service.FetchSafe(ctx, cfg, http.MethodGet, rawURL, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("sector document returned %d", status)
+		}
+		return body, nil
+	})
 	var q queue.Queue
 	switch cfg.Queue.Type {
 	case "", "memory":

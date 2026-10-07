@@ -93,7 +93,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Password hashing**: `internal/hashalgo/algo.go` exports one function, `Hash() passhash.Hasher`. Default is bcrypt (`passhash.DefaultBcryptCost`). Login, register, `POST /api/users`, and the password grant all use `UserService`. `HASH_ALGO` and `security.hash_algo` must be `internal/hashalgo/algo.go`. Edit the file, then `just run` or `just build`. Startup refuses to serve when the file differs from the binary.
 - **Config load**: empty `-config` loads `./config.yaml` when it exists, otherwise built-in defaults. A `-config` path that is missing is fatal.
 - **CIBA queue polling**: `MemoryQueue.Poll()` uses a channel. `queue.type: redis` stores the same requests with a TTL of `expires_at` and approves them in one Redis script.
-- **OIDC key generation**: RSA + EC keys generated on startup
+- **OIDC key generation**: RSA + EC keys generated on startup. `subject_type: pairwise` replaces `sub` with a sector PPID. `oidc.pairwise_salt` is required when any pairwise client exists. Changing the salt changes every pairwise `sub`. ID tokens and UserInfo are nested JWEs (`RSA-OAEP-256` + `A256GCM`) only when the client sets the matching `*_encrypted_response_alg` and `*_encrypted_response_enc` and publishes an encryption key. Access tokens stay unencrypted.
 - **Config defaults**: Server binds `0.0.0.0:8080`, SQLite at `./oauth.db`
 - **MFA**: TOTP with QR code rendering (PNG for web, ASCII for CLI)
 - **Management API**: `/api` and `/ciba` require a client-credentials access token with scope `management`. `oauth-cli init` writes `management.client_id` and `management.client_secret`. Startup inserts that client when it is missing. The CLI and `oauth-mobile` send the bearer token (`--client-id`, `--client-secret`, or `management.*` in `--config`).
@@ -104,6 +104,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Webhooks**: `webhooks` table. Management CRUD at `/api/webhooks`. Each row lists events (`login`, `logout`, `sso_session_triggered`, `bruteforce_detected`, `forgot_password`, `change_password`, and others). Delivery is HMAC-SHA256 in `X-Webhook-Signature` and does not fail the user action.
 - **Templates**: Go `html/template` in `internal/templates/`. `branding.templates` replaces a page by file name at startup. `docs.html` is not part of the auth chrome. Editing the embedded HTML does not change a built `bin/oauth-server` until the next build; the overlay directory does, after a restart.
 - **OpenAPI**: Spec in `openapi/spec.yaml`, Scalar UI at `/docs`
+- **Traces**: `telemetry.enabled` is false unless set. When it is true, `telemetry.otlp_endpoint` is required and the server exports OTLP/HTTP spans. Span attributes are `client_id`, `grant_type`, `org_id`, and `oauth.error`. Tokens, codes, and secrets are not span attributes.
 
 ## OAuth Flows Implemented
 
@@ -114,7 +115,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 | Device Code | `/oauth/device` + `/oauth/token` | Working |
 | CIBA (Poll mode) | `/oauth/bc-authorize` + `/oauth/token` | Working |
 | PAR | `/oauth/par` | Working |
-| Token Introspection | `/oauth/introspect` | Working |
+| Token Introspection | `/oauth/introspect` | Working. Confidential clients only. A client sees its own tokens, tokens whose `resource` is that client, or any token when it is the global management client. |
 | Token Revocation | `/oauth/revoke` | Working |
 | Dynamic Registration | `/oauth/register` | Working |
 | OIDC Discovery | `/.well-known/openid-configuration` | Working |
@@ -170,3 +171,4 @@ Key external packages:
 - `github.com/jackc/pgx/v5` - Postgres driver
 - `github.com/redis/go-redis/v9` - Redis client
 - `golang.org/x/crypto` - bcrypt and argon2id password hashing
+- `go.opentelemetry.io/otel` - optional OTLP/HTTP traces

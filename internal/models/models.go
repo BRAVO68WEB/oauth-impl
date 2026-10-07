@@ -26,6 +26,12 @@ type Client struct {
 	RegistrationSource                         string    `json:"registration_source,omitempty"`
 	DCREnabled                                 bool      `json:"dcr_enabled"`
 	CIMDEnabled                                bool      `json:"cimd_enabled"`
+	SubjectType                                string    `json:"subject_type,omitempty"`
+	SectorIdentifierURI                        string    `json:"sector_identifier_uri,omitempty"`
+	IDTokenEncryptedResponseAlg                string    `json:"id_token_encrypted_response_alg,omitempty"`
+	IDTokenEncryptedResponseEnc                string    `json:"id_token_encrypted_response_enc,omitempty"`
+	UserinfoEncryptedResponseAlg               string    `json:"userinfo_encrypted_response_alg,omitempty"`
+	UserinfoEncryptedResponseEnc               string    `json:"userinfo_encrypted_response_enc,omitempty"`
 	CreatedAt                                  time.Time `json:"created_at"`
 	UpdatedAt                                  time.Time `json:"updated_at"`
 }
@@ -70,6 +76,10 @@ type AccessToken struct {
 	Resource  string    `json:"resource,omitempty"`
 	TokenType string    `json:"token_type"`
 	DPoPJKT   string    `json:"dpop_jkt,omitempty"`
+	IssuedAt  time.Time `json:"iat,omitempty"`
+	JTI       string    `json:"jti,omitempty"`
+	OrgID     string    `json:"org_id,omitempty"`
+	Act       string    `json:"act,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Revoked   bool      `json:"revoked"`
 }
@@ -83,6 +93,10 @@ type RefreshToken struct {
 	Scopes      []string  `json:"scopes"`
 	Resource    string    `json:"resource,omitempty"`
 	FamilyID    string    `json:"family_id,omitempty"`
+	IssuedAt    time.Time `json:"iat,omitempty"`
+	JTI         string    `json:"jti,omitempty"`
+	OrgID       string    `json:"org_id,omitempty"`
+	Act         string    `json:"act,omitempty"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	Revoked     bool      `json:"revoked"`
 }

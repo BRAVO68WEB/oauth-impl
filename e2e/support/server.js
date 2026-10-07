@@ -78,6 +78,7 @@ function renderConfig(port, dsn, overrides) {
   lines.push(`  cimd_enabled: ${yamlValue(Boolean(registration.cimd_enabled))}`);
   lines.push("oidc:");
   lines.push(`  issuer: "http://127.0.0.1:${port}"`);
+  lines.push("  pairwise_salt: \"e2e-pairwise-salt\"");
   return lines.join("\n") + "\n";
 }
 

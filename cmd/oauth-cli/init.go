@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -124,6 +126,11 @@ func runInit(opts initOptions) (initResult, error) {
 	}
 	cfg.Management.ClientID = uuid.NewString()
 	cfg.Management.ClientSecret = secret
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return initResult{}, err
+	}
+	cfg.OIDC.PairwiseSalt = hex.EncodeToString(salt)
 	if err := cfg.Save(out); err != nil {
 		return initResult{}, fmt.Errorf("write config file: %w", err)
 	}

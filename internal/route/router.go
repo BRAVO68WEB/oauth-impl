@@ -18,6 +18,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
 	"github.com/bravo68web/oauth-impl/internal/service"
+	"github.com/bravo68web/oauth-impl/internal/telemetry"
 )
 
 type Router struct {
@@ -75,6 +76,7 @@ func NewRouter(
 }
 
 func (r *Router) setupMiddleware() {
+	r.mux.Use(telemetry.Middleware)
 	r.mux.Use(middleware.RequestID)
 	r.mux.Use(middleware.Logger)
 	r.mux.Use(middleware.Recoverer)

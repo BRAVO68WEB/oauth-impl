@@ -80,7 +80,11 @@ func (s *LogoutService) Notify(sid, sub string) {
 		if err != nil || client.BackchannelLogoutURI == "" {
 			continue
 		}
-		tok, err := s.oidc.CreateLogoutToken(client.ID, sub, sid)
+		subject := sub
+		if computed, err := s.oidc.Subject(client, sub); err == nil && computed != "" {
+			subject = computed
+		}
+		tok, err := s.oidc.CreateLogoutToken(client.ID, subject, sid)
 		if err != nil {
 			log.Printf("back-channel logout: sign token for %s: %v", client.ID, err)
 			continue
