@@ -55,6 +55,11 @@ func MountManagementExtras(api chi.Router, mgmt *controller.ManagementController
 	api.Post("/orgs/{orgID}/members", mgmt.HandleAddOrgMember)
 }
 
+func MountOrgSelector(r chi.Router, web *controller.WebController) {
+	r.Get("/organization", web.HandleOrgSelectPage)
+	r.Post("/organization", web.HandleOrgSelect)
+}
+
 func MountBrowserExtras(r chi.Router, account *controller.AccountController, oauthHandler *oauth.Handler) {
 	r.Get("/forgot", account.HandleForgotPage)
 	r.Post("/forgot", account.HandleForgotSubmit)

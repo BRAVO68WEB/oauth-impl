@@ -49,7 +49,7 @@ function isStep(current) {
   } catch {
     return false;
   }
-  return parsed.pathname === "/consent" || parsed.pathname === "/mfa/enroll";
+  return parsed.pathname === "/consent" || parsed.pathname === "/mfa/enroll" || parsed.pathname === "/organization";
 }
 
 async function ensureBrowser() {
@@ -158,6 +158,21 @@ async function authorize(page, url, options) {
   }
   if (page.url().includes("/mfa/enroll") || options.enroll) {
     await submitEnrollment(page);
+    await waitForStep(page);
+  }
+  if (page.url().includes("/organization")) {
+    if (options && options.org === false) {
+      throw new Error(`organization selector was not expected\nURL ${page.url()}`);
+    }
+    if (options && options.org) {
+      await page.locator(`input[name="organization"][value="${options.org}"]`).check();
+    } else {
+      await page.locator('input[name="organization"]').first().check();
+    }
+    await Promise.all([
+      page.waitForURL((current) => !String(current).includes("/organization"), { timeout: 20000 }),
+      page.locator("button[type=submit]").click(),
+    ]);
     await waitForStep(page);
   }
   if (options.consent !== false && page.url().includes("/consent")) {

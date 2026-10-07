@@ -58,25 +58,50 @@ func (r *OrgRepository) GetByDomain(domain string) (*models.Organization, error)
 	return r.withDomains(org)
 }
 
+func (r *OrgRepository) ListForUser(userID string) ([]*models.Organization, error) {
+	return r.list(`SELECT o.id, o.slug, o.name, o.created_at
+		FROM organizations o
+		JOIN org_memberships m ON m.org_id = o.id
+		WHERE m.user_id = ?
+		ORDER BY o.name`, userID)
+}
+
 func (r *OrgRepository) List() ([]*models.Organization, error) {
-	rows, err := r.db.Query(`SELECT id, slug, name, created_at FROM organizations ORDER BY slug`)
+	return r.list(`SELECT id, slug, name, created_at FROM organizations ORDER BY slug`)
+}
+
+// list reads every organization before loading domains. SQLite allows one
+// open statement, so a domain query cannot run while these rows are open.
+func (r *OrgRepository) list(query string, args ...any) ([]*models.Organization, error) {
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 	out := []*models.Organization{}
 	for rows.Next() {
 		org, err := scanOrg(rows.Scan)
 		if err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
+		out = append(out, org)
+	}
+	err = rows.Err()
+	closeErr := rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	for i, org := range out {
 		full, err := r.withDomains(org)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, full)
+		out[i] = full
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *OrgRepository) AddDomain(orgID, domain string) error {

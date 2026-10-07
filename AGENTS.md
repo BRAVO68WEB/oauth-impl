@@ -64,6 +64,7 @@ Key package boundaries:
 - `/register` - Registration form. `security.disable_registration` returns 403 for this page, `POST /register`, and `POST /api/account/register`. Management `POST /api/users` still creates users.
 - `/login/social/{id}` - Social login. Providers live in `social.providers`. `security.disable_social_registration` blocks creating an account from that callback.
 - `/consent` - OIDC consent screen
+- `/organization` - Organization selector. Shown when a signed-in user belongs to more than one organization and the client is not bound to one organization and the request did not name one.
 - `/mfa/enroll` - TOTP enrollment with QR code
 - `/forgot`, `/reset`, `/verify-email`, `/device`, `/oauth/logout` - account pages
 - Branding: `branding` in config, assets at `/branding/assets/`, optional HTML overlay in `branding.templates` (read at startup)
@@ -105,7 +106,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Templates**: Go `html/template` in `internal/templates/`. `branding.templates` replaces a page by file name at startup. `docs.html` is not part of the auth chrome. Editing the embedded HTML does not change a built `bin/oauth-server` until the next build; the overlay directory does, after a restart.
 - **OpenAPI**: Spec in `openapi/spec.yaml`, Scalar UI at `/docs`
 - **Traces**: `telemetry.enabled` is false unless set. When it is true, `telemetry.otlp_endpoint` is required and the server exports OTLP/HTTP spans. Span attributes are `client_id`, `grant_type`, `org_id`, and `oauth.error`. Tokens, codes, and secrets are not span attributes.
-- **Organizations**: `org.enabled` is false unless set. `org.enabled_domain_based_autolookup` requires `org.enabled`. When autolookup is on and the authorize or password request omits `organization`, a member whose email domain matches an organization domain receives that `org_id`. An explicit organization still requires membership.
+- **Organizations**: `org.enabled` is false unless set. `org.enabled_domain_based_autolookup` requires `org.enabled`. When autolookup is on and a non-interactive request omits `organization`, a member whose email domain matches an organization domain receives that `org_id`. The browser authorize flow shows `/organization` when the user belongs to more than one organization and neither the client nor the request has already chosen one. `prompt=none` returns `interaction_required` in that case. An explicit organization still requires membership.
 
 ## OAuth Flows Implemented
 

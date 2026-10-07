@@ -173,6 +173,26 @@ func (s *OrgService) AddMember(orgID, userID, role string) error {
 	return s.repo.AddMember(orgID, userID, role, time.Now().UTC())
 }
 
+// NeedsChoice reports that the browser must ask which organization to use.
+// A bound client, or a request that already names an organization, does not ask.
+func (s *OrgService) NeedsChoice(client *models.Client, userID, requested string) (bool, error) {
+	if !s.Enabled() || strings.TrimSpace(requested) != "" || (client != nil && client.OrgID != "") {
+		return false, nil
+	}
+	orgs, err := s.ListForUser(userID)
+	if err != nil {
+		return false, err
+	}
+	return len(orgs) > 1, nil
+}
+
+func (s *OrgService) ListForUser(userID string) ([]*models.Organization, error) {
+	if !s.Enabled() {
+		return nil, nil
+	}
+	return s.repo.ListForUser(userID)
+}
+
 func (s *OrgService) List() ([]*models.Organization, error) {
 	if !s.Enabled() {
 		return nil, ErrOrgDisabled

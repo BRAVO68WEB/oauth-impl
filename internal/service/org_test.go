@@ -67,6 +67,29 @@ func TestOrgResolveHonorsFlags(t *testing.T) {
 	if _, err := svc.Resolve(bound, user, "other"); err != ErrOrgInvalid {
 		t.Fatalf("wrong org err=%v", err)
 	}
+	single, err := svc.NeedsChoice(client, user.ID, "")
+	if err != nil || single {
+		t.Fatalf("single membership needs=%v err=%v", single, err)
+	}
+	second, err := svc.Create("Beta", "beta", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddMember(second.ID, user.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	needs, err := svc.NeedsChoice(client, user.ID, "")
+	if err != nil || !needs {
+		t.Fatalf("needs choice=%v err=%v", needs, err)
+	}
+	needs, err = svc.NeedsChoice(client, user.ID, "acme")
+	if err != nil || needs {
+		t.Fatalf("named org should not ask, needs=%v err=%v", needs, err)
+	}
+	needs, err = svc.NeedsChoice(bound, user.ID, "")
+	if err != nil || needs {
+		t.Fatalf("bound client should not ask, needs=%v err=%v", needs, err)
+	}
 	if domain, err := NormalizeDomain(" ACME.Example "); err != nil || domain != "acme.example" {
 		t.Fatalf("domain=%s err=%v", domain, err)
 	}
