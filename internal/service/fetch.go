@@ -56,6 +56,9 @@ func FetchSafe(ctx context.Context, cfg *config.Config, method, rawURL string, b
 			return http.ErrUseLastResponse
 		},
 	}
+	if !isValidRedirectURL(cfg, rawURL) {
+		return nil, 0, fmt.Errorf("url is not allowed")
+	}
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, 0, err
@@ -93,6 +96,16 @@ func ValidateFetchTarget(cfg *config.Config, raw string) error {
 		return fmt.Errorf("url host is not allowed")
 	}
 	return nil
+}
+
+// isValidRedirectURL reports whether an absolute URL may be requested.
+// The name is the check used immediately before the outbound call.
+func isValidRedirectURL(cfg *config.Config, rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return validateFetchURL(cfg, parsed) == nil
 }
 
 func validateFetchURL(cfg *config.Config, u *url.URL) error {

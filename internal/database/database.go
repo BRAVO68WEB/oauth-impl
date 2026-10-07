@@ -348,6 +348,23 @@ func (db *DB) Migrate() error {
 		)`,
 
 		// Resource servers (RFC 8707)
+		`CREATE TABLE IF NOT EXISTS organizations (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS organization_domains (
+			domain TEXT PRIMARY KEY,
+			org_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS org_memberships (
+			org_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (org_id, user_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS pairwise_subjects (
 			sector_id TEXT NOT NULL,
 			ppid TEXT NOT NULL,
@@ -414,6 +431,8 @@ func (db *DB) Migrate() error {
 		`ALTER TABLE clients ADD COLUMN id_token_encrypted_response_enc TEXT`,
 		`ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_alg TEXT`,
 		`ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_enc TEXT`,
+		`ALTER TABLE clients ADD COLUMN org_id TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN org_id TEXT`,
 	}
 	for _, alter := range alters {
 		if _, err := db.Exec(alter); err != nil && db.driver == "postgres" && !isDuplicateColumn(err) {
@@ -781,7 +800,7 @@ func (db *DB) SaveAccessToken(token *models.AccessToken) error {
 }
 
 func (db *DB) GetAccessToken(token string) (*models.AccessToken, error) {
-	query := `SELECT token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked
+	query := `SELECT token, client_id, user_id, scopes, token_type, dpop_jkt, expires_at, revoked, COALESCE(org_id, '')
 		FROM access_tokens WHERE token = ?`
 
 	at := &models.AccessToken{}
@@ -791,7 +810,7 @@ func (db *DB) GetAccessToken(token string) (*models.AccessToken, error) {
 	err := db.QueryRow(query, token).Scan(
 		&at.Token, &at.ClientID, &at.UserID,
 		&scopes, &at.TokenType, &at.DPoPJKT,
-		&at.ExpiresAt, &revoked,
+		&at.ExpiresAt, &revoked, &at.OrgID,
 	)
 	if err != nil {
 		return nil, err

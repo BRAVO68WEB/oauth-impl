@@ -79,6 +79,10 @@ function renderConfig(port, dsn, overrides) {
   lines.push("oidc:");
   lines.push(`  issuer: "http://127.0.0.1:${port}"`);
   lines.push("  pairwise_salt: \"e2e-pairwise-salt\"");
+  const org = overrides.org || {};
+  lines.push("org:");
+  lines.push(`  enabled: ${yamlValue(Boolean(org.enabled))}`);
+  lines.push(`  enabled_domain_based_autolookup: ${yamlValue(Boolean(org.enabled_domain_based_autolookup))}`);
   return lines.join("\n") + "\n";
 }
 
