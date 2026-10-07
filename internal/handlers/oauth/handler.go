@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -48,6 +49,7 @@ type Handler struct {
 	audit        *service.AuditLog
 	cimd         cache.Cache
 	introspect   *service.Introspector
+	orgs         *service.OrgService
 }
 
 type LoginRecorder interface {
@@ -108,6 +110,12 @@ func NewHandler(
 	}
 }
 
+func (h *Handler) SetOrgs(orgs *service.OrgService) {
+	if h != nil {
+		h.orgs = orgs
+	}
+}
+
 func (h *Handler) ClientName(id string) string {
 	if h == nil || h.clientRepo == nil || id == "" {
 		return ""
@@ -117,6 +125,20 @@ func (h *Handler) ClientName(id string) string {
 		return ""
 	}
 	return client.Name
+}
+
+// ClientRedirectURIs returns the redirect URIs registered for a client.
+func (h *Handler) ClientRedirectURIs(id string) []string {
+	if h == nil || id == "" {
+		return nil
+	}
+	client, code, _ := h.resolveClient(id, "")
+	if code != "" || client == nil {
+		return nil
+	}
+	out := make([]string, len(client.RedirectURIs))
+	copy(out, client.RedirectURIs)
+	return out
 }
 
 func (h *Handler) SetCache(c cache.Cache) {
@@ -157,6 +179,7 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	prompt := r.URL.Query().Get("prompt")
 	loginHint := r.URL.Query().Get("login_hint")
 	resource := r.URL.Query().Get("resource")
+	organization := r.URL.Query().Get("organization")
 	requestURI := r.URL.Query().Get("request_uri")
 	request := r.URL.Query().Get("request")
 
@@ -218,6 +241,9 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 				if v, ok := claims["resource"]; ok && resource == "" {
 					resource = v
 				}
+				if v, ok := claims["organization"]; ok && organization == "" {
+					organization = v
+				}
 			}
 		}
 	}
@@ -273,6 +299,9 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := params["resource"]; ok && resource == "" {
 			resource = v
+		}
+		if v, ok := params["organization"]; ok && organization == "" {
+			organization = v
 		}
 	}
 
@@ -345,8 +374,17 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeOAuthError(w, http.StatusFound, "consent_required", "User consent required", state)
 			return
 		}
+		needs, err := h.needsOrgChoice(client, session.UserID, organization)
+		if err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to load organizations", state)
+			return
+		}
+		if needs {
+			writeOAuthError(w, http.StatusFound, "interaction_required", "Organization selection required", state)
+			return
+		}
 		// Proceed directly
-		h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource)
+		h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization)
 		return
 	}
 
@@ -378,6 +416,16 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	needs, err := h.needsOrgChoice(client, session.UserID, organization)
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to load organizations", state)
+		return
+	}
+	if needs {
+		http.Redirect(w, r, "/organization?"+r.URL.RawQuery, http.StatusFound)
+		return
+	}
+
 	// Consent check
 	if prompt == "consent" || !h.hasConsented(session.UserID, clientID, scope) {
 		consentURL := "/consent?" + r.URL.RawQuery
@@ -385,12 +433,35 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource)
+	h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization)
 }
 
-func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Request, client *models.Client, session *Session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource string) {
+func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Request, client *models.Client, session *Session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization string) {
 	scopes := crypto.NormalizeScopes(scope)
 	hasOpenID := containsScope(scopes, "openid")
+	var account *models.User
+	if h.userRepo != nil && session != nil {
+		account, _ = h.userRepo.GetByID(session.UserID)
+	}
+	orgID, orgSlug, orgCode, orgDesc := h.applyOrg(client, account, organization)
+	if orgCode == "access_denied" && redirectURI != "" {
+		errorURL := redirectURI
+		if strings.Contains(errorURL, "?") {
+			errorURL += "&"
+		} else {
+			errorURL += "?"
+		}
+		errorURL += "error=access_denied&error_description=User+is+not+a+member+of+the+organization"
+		if state != "" {
+			errorURL += "&state=" + url.QueryEscape(state)
+		}
+		http.Redirect(w, r, errorURL, http.StatusFound)
+		return
+	}
+	if orgCode != "" {
+		writeOAuthError(w, http.StatusBadRequest, orgCode, orgDesc, state)
+		return
+	}
 
 	var code string
 	var accessToken string
@@ -422,6 +493,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 			FamilyID:            familyID,
 			SessionID:           session.ID,
 			AuthTime:            session.AuthTime,
+			OrgID:               orgID,
 			ExpiresAt:           time.Now().Add(h.cfg.Security.AuthorizationCodeLifetime),
 			Used:                false,
 		}
@@ -433,7 +505,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 	}
 
 	if needsToken {
-		accessToken, err = h.issueAccessToken(client.ID, session.UserID, scope, "Bearer")
+		accessToken, err = h.issueAccessTokenFor(client.ID, session.UserID, scope, "Bearer", orgID, orgSlug)
 		if err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token", state)
 			return
@@ -446,6 +518,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 			Scopes:    scopes,
 			Resource:  resource,
 			TokenType: "Bearer",
+			OrgID:     orgID,
 			ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 		}
 
@@ -470,16 +543,20 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		if h.hooks != nil && (crossClient || prompt == "none") {
-			h.hooks.Emit(service.EventSSOSession, map[string]any{
+			payload := map[string]any{
 				"user_id": session.UserID, "username": session.Username,
 				"session_id": session.ID, "client_id": client.ID,
 				"prompt": prompt, "scope": scope,
-			})
+			}
+			if orgID != "" {
+				payload["org_id"] = orgID
+			}
+			h.hooks.Emit(service.EventSSOSession, payload)
 		}
 	}
 
 	if needsIDToken && hasOpenID && h.oidcHandler != nil {
-		idToken, err = h.oidcHandler.CreateIDToken(client.ID, session.UserID, nonce, scopes, oidc.IDTokenExtra{SID: session.ID, AuthTime: session.AuthTime})
+		idToken, err = h.oidcHandler.CreateIDToken(client.ID, session.UserID, nonce, scopes, oidc.IDTokenExtra{SID: session.ID, AuthTime: session.AuthTime, OrgID: orgID, OrgSlug: orgSlug})
 		if err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to create ID token", state)
 			return
@@ -813,8 +890,9 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 	}
 
 	tokenType := boundTokenType(client)
+	orgSlug := h.orgSlug(authCode.OrgID)
 
-	accessToken, err := h.issueAccessToken(authCode.ClientID, authCode.UserID, strings.Join(authCode.Scopes, " "), tokenType)
+	accessToken, err := h.issueAccessTokenFor(authCode.ClientID, authCode.UserID, strings.Join(authCode.Scopes, " "), tokenType, authCode.OrgID, orgSlug)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -833,6 +911,7 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		Scopes:    authCode.Scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		OrgID:     authCode.OrgID,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -843,6 +922,7 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		UserID:      authCode.UserID,
 		Scopes:      authCode.Scopes,
 		FamilyID:    authCode.FamilyID,
+		OrgID:       authCode.OrgID,
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
 	}
 
@@ -859,7 +939,7 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 	var idToken string
 	if containsScope(authCode.Scopes, "openid") && h.oidcHandler != nil {
 		// Use nonce stored with the authorization code, not from the token request
-		idToken, err = h.oidcHandler.CreateIDToken(authCode.ClientID, authCode.UserID, authCode.Nonce, authCode.Scopes, oidc.IDTokenExtra{SID: authCode.SessionID, AuthTime: authCode.AuthTime})
+		idToken, err = h.oidcHandler.CreateIDToken(authCode.ClientID, authCode.UserID, authCode.Nonce, authCode.Scopes, oidc.IDTokenExtra{SID: authCode.SessionID, AuthTime: authCode.AuthTime, OrgID: authCode.OrgID, OrgSlug: orgSlug})
 		if err != nil {
 			writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to create ID token")
 			return
@@ -928,8 +1008,13 @@ func (h *Handler) handleClientCredentialsToken(w http.ResponseWriter, r *http.Re
 	}
 
 	tokenType := boundTokenType(client)
+	orgID, orgSlug, orgCode, orgDesc := h.applyOrg(client, nil, "")
+	if orgCode != "" {
+		writeTokenError(w, http.StatusBadRequest, orgCode, orgDesc)
+		return
+	}
 
-	accessToken, err := h.issueAccessToken(clientID, "", strings.Join(scopes, " "), tokenType)
+	accessToken, err := h.issueAccessTokenFor(clientID, "", strings.Join(scopes, " "), tokenType, orgID, orgSlug)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -941,6 +1026,7 @@ func (h *Handler) handleClientCredentialsToken(w http.ResponseWriter, r *http.Re
 		Scopes:    scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		OrgID:     orgID,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -1004,8 +1090,9 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tokenType := boundTokenType(client)
+	orgSlug := h.orgSlug(refreshToken.OrgID)
 
-	newAccessToken, err := h.issueAccessToken(refreshToken.ClientID, refreshToken.UserID, strings.Join(refreshToken.Scopes, " "), tokenType)
+	newAccessToken, err := h.issueAccessTokenFor(refreshToken.ClientID, refreshToken.UserID, strings.Join(refreshToken.Scopes, " "), tokenType, refreshToken.OrgID, orgSlug)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -1027,6 +1114,7 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		Scopes:    refreshToken.Scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		OrgID:     refreshToken.OrgID,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -1039,6 +1127,7 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		AccessToken: newAccessToken,
 		ClientID:    refreshToken.ClientID,
 		UserID:      refreshToken.UserID,
+		OrgID:       refreshToken.OrgID,
 		Scopes:      refreshToken.Scopes,
 		FamilyID:    familyID,
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
@@ -1128,7 +1217,17 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		scopes = client.Scopes
 	}
 
-	accessToken, err := h.issueAccessToken(clientID, user.ID, strings.Join(scopes, " "), tokenType)
+	orgID, orgSlug, orgCode, orgDesc := h.applyOrg(client, user, r.Form.Get("organization"))
+	if orgCode == "access_denied" {
+		writeTokenError(w, http.StatusBadRequest, "access_denied", orgDesc)
+		return
+	}
+	if orgCode != "" {
+		writeTokenError(w, http.StatusBadRequest, orgCode, orgDesc)
+		return
+	}
+
+	accessToken, err := h.issueAccessTokenFor(clientID, user.ID, strings.Join(scopes, " "), tokenType, orgID, orgSlug)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -1147,6 +1246,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		Scopes:    scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		OrgID:     orgID,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -1155,6 +1255,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		AccessToken: accessToken,
 		ClientID:    clientID,
 		UserID:      user.ID,
+		OrgID:       orgID,
 		Scopes:      scopes,
 		FamilyID:    uuid.New().String(),
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
@@ -1172,7 +1273,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 
 	var idToken string
 	if containsScope(scopes, "openid") && h.oidcHandler != nil {
-		idToken, err = h.oidcHandler.CreateIDToken(clientID, user.ID, "", scopes)
+		idToken, err = h.oidcHandler.CreateIDToken(clientID, user.ID, "", scopes, oidc.IDTokenExtra{OrgID: orgID, OrgSlug: orgSlug})
 		if err != nil {
 			writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to create ID token")
 			return
@@ -1555,6 +1656,10 @@ func isValidURI(uri string) bool {
 }
 
 func (h *Handler) issueAccessToken(clientID, userID, scope, tokenType string) (string, error) {
+	return h.issueAccessTokenFor(clientID, userID, scope, tokenType, "", "")
+}
+
+func (h *Handler) issueAccessTokenFor(clientID, userID, scope, tokenType, orgID, orgSlug string) (string, error) {
 	format := ""
 	var lifetime time.Duration
 	if h.cfg != nil {
@@ -1565,9 +1670,70 @@ func (h *Handler) issueAccessToken(clientID, userID, scope, tokenType string) (s
 		if h.oidcHandler == nil {
 			return "", fmt.Errorf("jwt access tokens require the oidc handler")
 		}
-		return h.oidcHandler.CreateAccessTokenJWT(clientID, userID, scope, tokenType, lifetime)
+		return h.oidcHandler.CreateAccessTokenJWT(clientID, userID, scope, tokenType, lifetime, orgID, orgSlug)
 	}
 	return crypto.GenerateToken()
+}
+
+func (h *Handler) needsOrgChoice(client *models.Client, userID, requested string) (bool, error) {
+	if h == nil || h.orgs == nil {
+		return false, nil
+	}
+	return h.orgs.NeedsChoice(client, userID, requested)
+}
+
+// NeedsOrgChoice reports whether /organization should be shown for this
+// authorize request. clientID is loaded when it names a real client.
+func (h *Handler) NeedsOrgChoice(clientID, userID, requested string) (bool, error) {
+	var client *models.Client
+	if h != nil && clientID != "" {
+		if loaded, code, _ := h.resolveClient(clientID, ""); code == "" {
+			client = loaded
+		}
+	}
+	return h.needsOrgChoice(client, userID, requested)
+}
+
+func (h *Handler) UserOrgs(userID string) ([]*models.Organization, error) {
+	if h == nil || h.orgs == nil {
+		return nil, nil
+	}
+	return h.orgs.ListForUser(userID)
+}
+
+func (h *Handler) orgSlug(orgID string) string {
+	if h == nil || h.orgs == nil || orgID == "" {
+		return ""
+	}
+	org, err := h.orgs.Get(orgID)
+	if err != nil || org == nil {
+		return ""
+	}
+	return org.Slug
+}
+
+func (h *Handler) applyOrg(client *models.Client, user *models.User, requested string) (string, string, string, string) {
+	if h == nil || h.orgs == nil {
+		if strings.TrimSpace(requested) != "" {
+			return "", "", "invalid_request", "organizations are disabled"
+		}
+		return "", "", "", ""
+	}
+	choice, err := h.orgs.Resolve(client, user, requested)
+	if err == nil && choice == nil {
+		return "", "", "", ""
+	}
+	if err == nil {
+		return choice.ID, choice.Slug, "", ""
+	}
+	switch {
+	case errors.Is(err, service.ErrOrgDisabled), errors.Is(err, service.ErrOrgInvalid):
+		return "", "", "invalid_request", err.Error()
+	case errors.Is(err, service.ErrOrgDenied):
+		return "", "", "access_denied", err.Error()
+	default:
+		return "", "", "server_error", "failed to resolve organization"
+	}
 }
 
 func mustGenerateToken() string {
