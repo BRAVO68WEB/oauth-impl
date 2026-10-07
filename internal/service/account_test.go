@@ -3,7 +3,6 @@ package service
 import (
 	"errors"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,8 +11,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 	"github.com/bravo68web/oauth-impl/pkg/passhash"
 )
 
@@ -32,14 +31,7 @@ func (f *fakeMail) Send(to, subject, text string) error {
 }
 
 func TestRegisterDisabledCreatesNoUser(t *testing.T) {
-	db, err := database.New(filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	conn := db
 	cfg := config.DefaultConfig()
 	cfg.Security.DisableRegistration = true
@@ -58,14 +50,7 @@ func TestRegisterDisabledCreatesNoUser(t *testing.T) {
 }
 
 func TestResetAndLoginMail(t *testing.T) {
-	db, err := database.New(filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	conn := db
 	cfg := config.DefaultConfig()
 	users := NewUserService(repository.NewUserRepository(conn), nil, &cfg.Security, passhash.Bcrypt(bcrypt.MinCost))

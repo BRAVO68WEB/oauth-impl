@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build
@@ -119,20 +122,6 @@ jobs:
   test-postgres:
     name: Test Postgres
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: oauth
-          POSTGRES_PASSWORD: oauth
-          POSTGRES_DB: oauth
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U oauth"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -142,9 +131,7 @@ jobs:
           go-version: "1.26"
 
       - name: Test against Postgres
-        env:
-          POSTGRES_DSN: postgres://oauth:oauth@localhost:5432/oauth?sslmode=disable
-        run: go test ./internal/database/ ./tests/integration/ -count=1
+        run: go test ./internal/database/ ./internal/service/ ./internal/oidc/ ./tests/integration/ -count=1
 
   e2e:
     name: E2E

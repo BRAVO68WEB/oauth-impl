@@ -26,7 +26,7 @@ func (r *LoginEventRepository) Insert(ev *models.LoginEvent) error {
 	}
 	_, err := r.db.Exec(`INSERT INTO login_events (id, user_id, success, mfa, ip, user_agent, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		ev.ID, ev.UserID, ev.Success, ev.MFA, ev.IP, ev.UserAgent, ev.CreatedAt,
+		ev.ID, ev.UserID, boolInt(ev.Success), boolInt(ev.MFA), ev.IP, ev.UserAgent, ev.CreatedAt,
 	)
 	return err
 }

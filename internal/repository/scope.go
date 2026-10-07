@@ -22,7 +22,7 @@ func (r *ScopeRepository) Create(scope *models.Scope) error {
 
 	_, err := r.db.Exec(query,
 		scope.Name, scope.Description, scope.ResourceServer,
-		scope.IsDefault, time.Now(),
+		boolInt(scope.IsDefault), time.Now(),
 	)
 	return err
 }
@@ -33,10 +33,11 @@ func (r *ScopeRepository) Get(name string) (*models.Scope, error) {
 
 	scope := &models.Scope{}
 	var resourceServer sql.NullString
+	var isDefault bit
 
 	err := r.db.QueryRow(query, name).Scan(
 		&scope.Name, &scope.Description, &resourceServer,
-		&scope.IsDefault, &scope.CreatedAt,
+		&isDefault, &scope.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -45,6 +46,7 @@ func (r *ScopeRepository) Get(name string) (*models.Scope, error) {
 	if resourceServer.Valid {
 		scope.ResourceServer = resourceServer.String
 	}
+	scope.IsDefault = isDefault.Bool()
 
 	return scope, nil
 }
@@ -63,10 +65,11 @@ func (r *ScopeRepository) List() ([]*models.Scope, error) {
 	for rows.Next() {
 		scope := &models.Scope{}
 		var resourceServer sql.NullString
+		var isDefault bit
 
 		err := rows.Scan(
 			&scope.Name, &scope.Description, &resourceServer,
-			&scope.IsDefault, &scope.CreatedAt,
+			&isDefault, &scope.CreatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -75,6 +78,7 @@ func (r *ScopeRepository) List() ([]*models.Scope, error) {
 		if resourceServer.Valid {
 			scope.ResourceServer = resourceServer.String
 		}
+		scope.IsDefault = isDefault.Bool()
 
 		scopes = append(scopes, scope)
 	}
@@ -95,10 +99,11 @@ func (r *ScopeRepository) ListByResource(resourceURI string) ([]*models.Scope, e
 	for rows.Next() {
 		scope := &models.Scope{}
 		var resourceServer sql.NullString
+		var isDefault bit
 
 		err := rows.Scan(
 			&scope.Name, &scope.Description, &resourceServer,
-			&scope.IsDefault, &scope.CreatedAt,
+			&isDefault, &scope.CreatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -107,6 +112,7 @@ func (r *ScopeRepository) ListByResource(resourceURI string) ([]*models.Scope, e
 		if resourceServer.Valid {
 			scope.ResourceServer = resourceServer.String
 		}
+		scope.IsDefault = isDefault.Bool()
 
 		scopes = append(scopes, scope)
 	}

@@ -24,7 +24,7 @@ func (r *WebhookRepository) Create(w *models.Webhook) error {
 	}
 	_, err = r.db.Exec(`INSERT INTO webhooks (id, url, secret, events, enabled, description, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.URL, w.Secret, string(events), w.Enabled, w.Description, w.CreatedAt, w.UpdatedAt,
+		w.ID, w.URL, w.Secret, string(events), boolInt(w.Enabled), w.Description, w.CreatedAt, w.UpdatedAt,
 	)
 	return err
 }
@@ -36,7 +36,7 @@ func (r *WebhookRepository) Update(w *models.Webhook) error {
 	}
 	w.UpdatedAt = time.Now()
 	res, err := r.db.Exec(`UPDATE webhooks SET url = ?, secret = ?, events = ?, enabled = ?, description = ?, updated_at = ? WHERE id = ?`,
-		w.URL, w.Secret, string(events), w.Enabled, w.Description, w.UpdatedAt, w.ID,
+		w.URL, w.Secret, string(events), boolInt(w.Enabled), w.Description, w.UpdatedAt, w.ID,
 	)
 	if err != nil {
 		return err

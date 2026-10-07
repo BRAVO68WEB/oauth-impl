@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const { binPath, repoRoot } = require("../test/hooks");
+const { binPath, repoRoot, pgBase } = require("../test/hooks");
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -26,7 +26,7 @@ function yamlValue(value) {
   return JSON.stringify(String(value));
 }
 
-function renderConfig(port, dbPath, overrides) {
+function renderConfig(port, dsn, overrides) {
   const security = overrides.security || {};
   const password = security.password || null;
   const mfa = security.mfa || null;
@@ -37,7 +37,8 @@ function renderConfig(port, dbPath, overrides) {
     "  host: \"127.0.0.1\"",
     `  port: ${port}`,
     "database:",
-    `  path: ${JSON.stringify(dbPath)}`,
+    "  driver: postgres",
+    `  dsn: ${JSON.stringify(dsn)}`,
     "  migrations: true",
     "security:",
     `  issuer: "http://127.0.0.1:${port}"`,
@@ -98,13 +99,22 @@ async function waitHealth(base) {
   throw new Error(`server did not become healthy: ${last}`);
 }
 
+async function newDatabase() {
+  const response = await fetch(`${pgBase()}/db`, { method: "POST" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.dsn) {
+    throw new Error(`postgres database was not created: ${response.status} ${JSON.stringify(body)}`);
+  }
+  return body.dsn;
+}
+
 async function startServer(overrides = {}) {
   const port = await freePort();
+  const dsn = await newDatabase();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oauth-e2e-"));
-  const dbPath = path.join(dir, "oauth.db");
   const cfgPath = path.join(dir, "config.yaml");
-  fs.writeFileSync(cfgPath, renderConfig(port, dbPath, overrides));
-  const child = spawn(binPath, ["-config", cfgPath, "-port", String(port), "-db", dbPath], {
+  fs.writeFileSync(cfgPath, renderConfig(port, dsn, overrides));
+  const child = spawn(binPath, ["-config", cfgPath, "-port", String(port)], {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
   });

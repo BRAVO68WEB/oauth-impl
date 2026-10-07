@@ -1,14 +1,13 @@
 package oidc
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 )
 
 func TestClaimMappingAndReservedSub(t *testing.T) {
@@ -18,14 +17,7 @@ func TestClaimMappingAndReservedSub(t *testing.T) {
 		t.Fatal("sub must not be remapped")
 	}
 
-	db, err := database.New(filepath.Join(t.TempDir(), "claims.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	cfg = config.DefaultConfig()
 	cfg.OIDC.ClaimMappings = []config.ClaimMapping{{
 		Claim: "department", Source: "attr.department", Scopes: []string{"profile"},
@@ -69,14 +61,7 @@ func TestClaimMappingAndReservedSub(t *testing.T) {
 }
 
 func TestSigningKeysSurviveRestartAndRotation(t *testing.T) {
-	dir := t.TempDir()
-	db, err := database.New(filepath.Join(dir, "keys.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db, dsn := testpg.OpenDSN(t)
 	cfg := config.DefaultConfig()
 	first, err := NewHandler(db, cfg)
 	if err != nil {
@@ -89,14 +74,7 @@ func TestSigningKeysSurviveRestartAndRotation(t *testing.T) {
 	}
 	_ = db.Close()
 
-	db, err = database.New(filepath.Join(dir, "keys.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db = testpg.Connect(t, dsn)
 	second, err := NewHandler(db, cfg)
 	if err != nil {
 		t.Fatal(err)

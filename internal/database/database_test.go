@@ -1,30 +1,17 @@
-package database
+package database_test
 
 import (
-	"os"
 	"testing"
 	"time"
 
+	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 )
 
-func setupTestDB(t *testing.T) (*DB, func()) {
-	dbPath := "test_" + t.Name() + ".db"
-	db, err := New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
-
-	if err := db.Migrate(); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
-
-	cleanup := func() {
-		func() { _ = db.Close() }()
-		func() { _ = os.Remove(dbPath) }()
-	}
-
-	return db, cleanup
+func setupTestDB(t *testing.T) (*database.DB, func()) {
+	t.Helper()
+	return testpg.Open(t), func() {}
 }
 
 func TestCreateAndGetClient(t *testing.T) {
