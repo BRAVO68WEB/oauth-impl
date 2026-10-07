@@ -1396,6 +1396,14 @@ func (h *Handler) HandleIntrospect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 		return
 	}
+	if result != nil && result.Active && result.Sub != "" && h.oidcHandler != nil {
+		computed, err := h.oidcHandler.SubjectFor(result.ClientID, result.Sub)
+		if err != nil {
+			writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to resolve subject")
+			return
+		}
+		result.Sub = computed
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 

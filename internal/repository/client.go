@@ -28,6 +28,9 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		source = "management"
 	}
 	client.RegistrationSource = source
+	if client.SubjectType == "" {
+		client.SubjectType = "public"
+	}
 	query := `INSERT INTO clients (id, secret, name, redirect_uris, grant_types, scopes,
 		token_endpoint_auth_method, dpop_bound_access_tokens,
 		require_pushed_authorization_requests, backchannel_token_delivery_mode,
@@ -35,8 +38,9 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		backchannel_logout_uri, backchannel_logout_session_required, post_logout_redirect_uris,
 		jwks, jwks_uri, request_object_signing_alg,
 		registration_source, dcr_enabled, cimd_enabled,
+		subject_type, sector_identifier_uri,
 		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
 		client.ID, client.Secret, client.Name,
@@ -47,6 +51,7 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		client.BackchannelLogoutURI, boolInt(client.BackchannelLogoutSessionRequired), string(postLogout),
 		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		source, boolInt(client.DCREnabled), boolInt(client.CIMDEnabled),
+		client.SubjectType, client.SectorIdentifierURI,
 		client.CreatedAt, client.UpdatedAt,
 	)
 	return err
@@ -88,6 +93,7 @@ func (r *ClientRepository) Update(client *models.Client) error {
 		backchannel_logout_uri=?, backchannel_logout_session_required=?, post_logout_redirect_uris=?,
 		jwks=?, jwks_uri=?, request_object_signing_alg=?,
 		registration_source=?, dcr_enabled=?, cimd_enabled=?,
+		subject_type=?, sector_identifier_uri=?,
 		updated_at=?
 		WHERE id=?`
 
@@ -103,9 +109,23 @@ func (r *ClientRepository) Update(client *models.Client) error {
 		client.BackchannelLogoutURI, boolInt(client.BackchannelLogoutSessionRequired), string(postLogout),
 		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		source, boolInt(client.DCREnabled), boolInt(client.CIMDEnabled),
+		subjectTypeOrPublic(client.SubjectType), client.SectorIdentifierURI,
 		time.Now(), client.ID,
 	)
 	return err
+}
+
+func subjectTypeOrPublic(value string) string {
+	if value == "" {
+		return "public"
+	}
+	return value
+}
+
+func (r *ClientRepository) CountPairwise() (int, error) {
+	var n int
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM clients WHERE subject_type = 'pairwise'`).Scan(&n)
+	return n, err
 }
 
 func (r *ClientRepository) Delete(id string) error {
@@ -120,6 +140,7 @@ const clientSelect = `SELECT id, secret, name, redirect_uris, grant_types, scope
 	COALESCE(backchannel_logout_uri, ''), COALESCE(backchannel_logout_session_required, 1), COALESCE(post_logout_redirect_uris, '[]'),
 	jwks, jwks_uri, request_object_signing_alg,
 	COALESCE(registration_source, 'management'), COALESCE(dcr_enabled, 0), COALESCE(cimd_enabled, 0),
+	COALESCE(subject_type, 'public'), COALESCE(sector_identifier_uri, ''),
 	created_at, updated_at
 	FROM clients`
 
@@ -138,6 +159,7 @@ func scanClient(scan func(dest ...any) error) (*models.Client, error) {
 		&client.BackchannelLogoutURI, &sessionRequired, &postLogout,
 		&jwks, &jwksUri, &reqObjAlg,
 		&source, &dcrEnabled, &cimdEnabled,
+		&client.SubjectType, &client.SectorIdentifierURI,
 		&client.CreatedAt, &client.UpdatedAt,
 	); err != nil {
 		return nil, err

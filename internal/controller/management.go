@@ -116,6 +116,8 @@ func (c *ManagementController) HandleCreateClient(w http.ResponseWriter, r *http
 		PostLogoutRedirectURIs                     []string `json:"post_logout_redirect_uris"`
 		DCREnabled                                 bool     `json:"dcr_enabled"`
 		CIMDEnabled                                bool     `json:"cimd_enabled"`
+		SubjectType                                string   `json:"subject_type"`
+		SectorIdentifierURI                        string   `json:"sector_identifier_uri"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -139,6 +141,8 @@ func (c *ManagementController) HandleCreateClient(w http.ResponseWriter, r *http
 		PostLogoutRedirectURIs:                     req.PostLogoutRedirectURIs,
 		DCREnabled:                                 req.DCREnabled,
 		CIMDEnabled:                                req.CIMDEnabled,
+		SubjectType:                                req.SubjectType,
+		SectorIdentifierURI:                        req.SectorIdentifierURI,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -183,6 +187,8 @@ func (c *ManagementController) HandleUpdateClient(w http.ResponseWriter, r *http
 		PostLogoutRedirectURIs                     []string `json:"post_logout_redirect_uris"`
 		DCREnabled                                 *bool    `json:"dcr_enabled"`
 		CIMDEnabled                                *bool    `json:"cimd_enabled"`
+		SubjectType                                string   `json:"subject_type"`
+		SectorIdentifierURI                        *string  `json:"sector_identifier_uri"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -223,9 +229,15 @@ func (c *ManagementController) HandleUpdateClient(w http.ResponseWriter, r *http
 	if req.CIMDEnabled != nil {
 		existing.CIMDEnabled = *req.CIMDEnabled
 	}
+	if req.SubjectType != "" {
+		existing.SubjectType = req.SubjectType
+	}
+	if req.SectorIdentifierURI != nil {
+		existing.SectorIdentifierURI = *req.SectorIdentifierURI
+	}
 
 	if err := c.clientSvc.UpdateClient(existing); err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", "Failed to update client")
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	c.writeAudit(r, "client.update", "client", existing.ID, map[string]any{"name": existing.Name, "dcr_enabled": existing.DCREnabled, "cimd_enabled": existing.CIMDEnabled})

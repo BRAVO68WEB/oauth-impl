@@ -226,6 +226,7 @@ type OIDCConfig struct {
 	ClaimMappings        []ClaimMapping `yaml:"claim_mappings"`
 	KeyRotationInterval  time.Duration  `yaml:"key_rotation_interval"`
 	KeyRetain            time.Duration  `yaml:"key_retain"`
+	PairwiseSalt         string         `yaml:"pairwise_salt"`
 }
 
 func DefaultConfig() *Config {

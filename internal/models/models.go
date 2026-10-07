@@ -26,6 +26,8 @@ type Client struct {
 	RegistrationSource                         string    `json:"registration_source,omitempty"`
 	DCREnabled                                 bool      `json:"dcr_enabled"`
 	CIMDEnabled                                bool      `json:"cimd_enabled"`
+	SubjectType                                string    `json:"subject_type,omitempty"`
+	SectorIdentifierURI                        string    `json:"sector_identifier_uri,omitempty"`
 	CreatedAt                                  time.Time `json:"created_at"`
 	UpdatedAt                                  time.Time `json:"updated_at"`
 }

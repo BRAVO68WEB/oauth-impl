@@ -93,7 +93,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Password hashing**: `internal/hashalgo/algo.go` exports one function, `Hash() passhash.Hasher`. Default is bcrypt (`passhash.DefaultBcryptCost`). Login, register, `POST /api/users`, and the password grant all use `UserService`. `HASH_ALGO` and `security.hash_algo` must be `internal/hashalgo/algo.go`. Edit the file, then `just run` or `just build`. Startup refuses to serve when the file differs from the binary.
 - **Config load**: empty `-config` loads `./config.yaml` when it exists, otherwise built-in defaults. A `-config` path that is missing is fatal.
 - **CIBA queue polling**: `MemoryQueue.Poll()` uses a channel. `queue.type: redis` stores the same requests with a TTL of `expires_at` and approves them in one Redis script.
-- **OIDC key generation**: RSA + EC keys generated on startup
+- **OIDC key generation**: RSA + EC keys generated on startup. `subject_type: pairwise` replaces `sub` with a sector PPID. `oidc.pairwise_salt` is required when any pairwise client exists. Changing the salt changes every pairwise `sub`.
 - **Config defaults**: Server binds `0.0.0.0:8080`, SQLite at `./oauth.db`
 - **MFA**: TOTP with QR code rendering (PNG for web, ASCII for CLI)
 - **Management API**: `/api` and `/ciba` require a client-credentials access token with scope `management`. `oauth-cli init` writes `management.client_id` and `management.client_secret`. Startup inserts that client when it is missing. The CLI and `oauth-mobile` send the bearer token (`--client-id`, `--client-secret`, or `management.*` in `--config`).
