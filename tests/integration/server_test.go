@@ -7,26 +7,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/queue"
 	"github.com/bravo68web/oauth-impl/internal/server"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 )
 
 func setupTestServer(t *testing.T) (*httptest.Server, func()) {
-	dbPath := "test_integration_" + t.Name() + ".db"
-	db, err := database.New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
-
-	if err := db.Migrate(); err != nil {
-		t.Fatalf("Failed to run migrations: %v", err)
-	}
+	db := testpg.Open(t)
 
 	cfg := config.DefaultConfig()
 	cfg.Security.RequirePKCE = false
@@ -46,8 +37,6 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 
 	cleanup := func() {
 		ts.Close()
-		func() { _ = db.Close() }()
-		func() { _ = os.Remove(dbPath) }()
 	}
 
 	return ts, cleanup

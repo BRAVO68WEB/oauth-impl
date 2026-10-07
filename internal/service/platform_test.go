@@ -5,13 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 )
 
 func TestPasswordPolicyOnWriteNotLogin(t *testing.T) {
@@ -95,14 +94,7 @@ func TestBotToken(t *testing.T) {
 }
 
 func TestAuditOmitsSecrets(t *testing.T) {
-	db, err := database.New(filepath.Join(t.TempDir(), "audit.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	log := NewAuditLog(repository.NewAuditRepository(db))
 	log.Write("client", "mgmt", "client.create", "client", "app", nil, map[string]any{
 		"name": "App", "secret": "s3cret", "client_secret": "nope",

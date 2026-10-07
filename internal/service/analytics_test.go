@@ -1,28 +1,20 @@
 package service
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 	"github.com/bravo68web/oauth-impl/pkg/passhash"
 )
 
 func TestLoginAnalyticsGroupsIPs(t *testing.T) {
-	db, err := database.New(filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	cfg := config.DefaultConfig()
 	repo := repository.NewLoginEventRepository(db)
 	users := NewUserService(repository.NewUserRepository(db), nil, &cfg.Security, passhash.Bcrypt(bcrypt.MinCost))

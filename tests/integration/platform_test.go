@@ -7,7 +7,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/queue"
 	"github.com/bravo68web/oauth-impl/internal/server"
 	"github.com/bravo68web/oauth-impl/internal/service"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 )
 
 func TestLoginCSRF(t *testing.T) {
@@ -271,15 +271,7 @@ func TestForcedDPoP(t *testing.T) {
 }
 
 func TestOpenAPICoversRouter(t *testing.T) {
-	dbPath := t.TempDir() + "/openapi.db"
-	db, err := database.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close(); _ = os.Remove(dbPath) }()
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	cfg := config.DefaultConfig()
 	cfg.Management.ClientID = "test-mgmt"
 	cfg.Management.ClientSecret = "test-mgmt-secret"
@@ -320,14 +312,7 @@ var platformDB *database.DB
 
 func setupPlatformServer(t *testing.T, tweak func(*config.Config)) (*httptest.Server, func()) {
 	t.Helper()
-	dbPath := t.TempDir() + "/platform.db"
-	db, err := database.New(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	cfg := config.DefaultConfig()
 	cfg.Security.RequirePKCE = false
 	cfg.Security.AllowInsecureFetch = true

@@ -3,14 +3,12 @@ package database_test
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 )
 
 func pgID(t *testing.T) string {
@@ -23,24 +21,11 @@ func pgID(t *testing.T) string {
 }
 
 func TestPostgresMigrateRoundTrip(t *testing.T) {
-	dsn := os.Getenv("POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("POSTGRES_DSN is not set")
-	}
-	cfg := config.DefaultConfig()
-	cfg.Database.Driver = "postgres"
-	cfg.Database.DSN = dsn
-	db, err := database.Open(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db, dsn := testpg.OpenDSN(t)
 	if err := db.Migrate(); err != nil {
 		t.Fatalf("second migrate: %v", err)
 	}
+	_ = dsn
 
 	id := pgID(t)
 	users := repository.NewUserRepository(db)

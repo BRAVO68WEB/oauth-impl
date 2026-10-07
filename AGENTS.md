@@ -86,6 +86,7 @@ go test ./... -v                   # All tests
 ## Key Quirks
 
 - **SQLite single-connection**: `database.driver: sqlite` sets `MaxOpenConns=1`. `postgres` uses `database.dsn` and a pool of 10. `?` placeholders are rewritten to `$1` for Postgres. `migrations/*.sql` are records; `database.Migrate` is the live migrator.
+- **Tests**: unit tests, `tests/integration`, and `e2e` use Postgres from `internal/testpg` (testcontainers). `e2e/pgserve` keeps that container up for Mocha. Docker must be running.
 - **Redis**: `queue.type` and `cache.provider` stay `memory` unless `redis.addr` is set and the matching value is `redis`. Redis holds the CIBA/device approval queue, CIMD documents, and DPoP `jti` replay entries. It does not hold users or tokens.
 - **Password hashing**: `internal/hashalgo/algo.go` exports one function, `Hash() passhash.Hasher`. Default is bcrypt (`passhash.DefaultBcryptCost`). Login, register, `POST /api/users`, and the password grant all use `UserService`. `HASH_ALGO` and `security.hash_algo` must be `internal/hashalgo/algo.go`. Edit the file, then `just run` or `just build`. Startup refuses to serve when the file differs from the binary.
 - **Config load**: empty `-config` loads `./config.yaml` when it exists, otherwise built-in defaults. A `-config` path that is missing is fatal.

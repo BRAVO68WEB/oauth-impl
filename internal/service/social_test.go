@@ -6,16 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/social"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 	"github.com/bravo68web/oauth-impl/pkg/passhash"
 )
 
@@ -124,14 +123,7 @@ func TestSocialEmailDoesNotAttach(t *testing.T) {
 
 func newSocialTest(t *testing.T, upstream *httptest.Server, cfg *config.Config) (*SocialService, *UserService, *repository.SocialRepository) {
 	t.Helper()
-	db, err := database.New(filepath.Join(t.TempDir(), "oauth.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	conn := db
 	cfg.Security.Issuer = "http://localhost:8080"
 	cfg.Social.Providers = []config.SocialProvider{{

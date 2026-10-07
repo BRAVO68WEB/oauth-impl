@@ -458,8 +458,8 @@ func (db *DB) CreateClient(client *models.Client) error {
 	_, err := db.Exec(query,
 		client.ID, client.Secret, client.Name,
 		string(redirectURIs), string(grantTypes), string(scopes),
-		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
-		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
+		client.TokenEndpointAuthMethod, bitArg(client.DPoPBoundAccessTokens),
+		bitArg(client.RequirePushedAuthorizationRequests), client.BackchannelTokenDeliveryMode,
 		client.BackchannelClientNotificationEndpoint, client.BackchannelAuthenticationRequestSigningAlg,
 		client.CreatedAt, client.UpdatedAt,
 	)
@@ -476,12 +476,13 @@ func (db *DB) GetClient(id string) (*models.Client, error) {
 
 	client := &models.Client{}
 	var redirectURIs, grantTypes, scopes string
+	var dpopBound, requirePAR flag
 
 	err := db.QueryRow(query, id).Scan(
 		&client.ID, &client.Secret, &client.Name,
 		&redirectURIs, &grantTypes, &scopes,
-		&client.TokenEndpointAuthMethod, &client.DPoPBoundAccessTokens,
-		&client.RequirePushedAuthorizationRequests, &client.BackchannelTokenDeliveryMode,
+		&client.TokenEndpointAuthMethod, &dpopBound,
+		&requirePAR, &client.BackchannelTokenDeliveryMode,
 		&client.BackchannelClientNotificationEndpoint, &client.BackchannelAuthenticationRequestSigningAlg,
 		&client.CreatedAt, &client.UpdatedAt,
 	)
@@ -498,6 +499,8 @@ func (db *DB) GetClient(id string) (*models.Client, error) {
 	if err := json.Unmarshal([]byte(scopes), &client.Scopes); err != nil {
 		return nil, err
 	}
+	client.DPoPBoundAccessTokens = dpopBound.Bool()
+	client.RequirePushedAuthorizationRequests = requirePAR.Bool()
 
 	return client, nil
 }
@@ -520,12 +523,13 @@ func (db *DB) ListClients() ([]*models.Client, error) {
 	for rows.Next() {
 		client := &models.Client{}
 		var redirectURIs, grantTypes, scopes string
+		var dpopBound, requirePAR flag
 
 		err := rows.Scan(
 			&client.ID, &client.Secret, &client.Name,
 			&redirectURIs, &grantTypes, &scopes,
-			&client.TokenEndpointAuthMethod, &client.DPoPBoundAccessTokens,
-			&client.RequirePushedAuthorizationRequests, &client.BackchannelTokenDeliveryMode,
+			&client.TokenEndpointAuthMethod, &dpopBound,
+			&requirePAR, &client.BackchannelTokenDeliveryMode,
 			&client.BackchannelClientNotificationEndpoint, &client.BackchannelAuthenticationRequestSigningAlg,
 			&client.CreatedAt, &client.UpdatedAt,
 		)
@@ -542,6 +546,8 @@ func (db *DB) ListClients() ([]*models.Client, error) {
 		if err := json.Unmarshal([]byte(scopes), &client.Scopes); err != nil {
 			return nil, err
 		}
+		client.DPoPBoundAccessTokens = dpopBound.Bool()
+		client.RequirePushedAuthorizationRequests = requirePAR.Bool()
 
 		clients = append(clients, client)
 	}
@@ -562,8 +568,8 @@ func (db *DB) UpdateClient(client *models.Client) error {
 
 	_, err := db.Exec(query,
 		client.Name, string(redirectURIs), string(grantTypes), string(scopes),
-		client.TokenEndpointAuthMethod, client.DPoPBoundAccessTokens,
-		client.RequirePushedAuthorizationRequests, client.BackchannelTokenDeliveryMode,
+		client.TokenEndpointAuthMethod, bitArg(client.DPoPBoundAccessTokens),
+		bitArg(client.RequirePushedAuthorizationRequests), client.BackchannelTokenDeliveryMode,
 		client.BackchannelClientNotificationEndpoint, client.BackchannelAuthenticationRequestSigningAlg,
 		time.Now(), client.ID,
 	)
@@ -595,7 +601,7 @@ func (db *DB) CreateUser(user *models.User) error {
 	_, err := db.Exec(query,
 		user.ID, user.Username, user.PasswordHash,
 		user.Email, user.PhoneNumber, user.CreatedAt,
-		user.EmailVerified, user.Disabled, user.GivenName, user.FamilyName,
+		bitArg(user.EmailVerified), bitArg(user.Disabled), user.GivenName, user.FamilyName,
 	)
 	return err
 }
@@ -700,7 +706,7 @@ func (db *DB) SaveAuthorizationCode(code *models.AuthorizationCode) error {
 	_, err := db.Exec(query,
 		code.Code, code.ClientID, code.UserID, code.RedirectURI,
 		string(scopes), code.CodeChallenge, code.CodeChallengeMethod,
-		code.ExpiresAt, code.Used,
+		code.ExpiresAt, bitArg(code.Used),
 	)
 	return err
 }
@@ -712,11 +718,12 @@ func (db *DB) GetAuthorizationCode(code string) (*models.AuthorizationCode, erro
 
 	ac := &models.AuthorizationCode{}
 	var scopes string
+	var used flag
 
 	err := db.QueryRow(query, code).Scan(
 		&ac.Code, &ac.ClientID, &ac.UserID, &ac.RedirectURI,
 		&scopes, &ac.CodeChallenge, &ac.CodeChallengeMethod,
-		&ac.ExpiresAt, &ac.Used,
+		&ac.ExpiresAt, &used,
 	)
 	if err != nil {
 		return nil, err
@@ -725,6 +732,7 @@ func (db *DB) GetAuthorizationCode(code string) (*models.AuthorizationCode, erro
 	if err := json.Unmarshal([]byte(scopes), &ac.Scopes); err != nil {
 		return nil, err
 	}
+	ac.Used = used.Bool()
 	return ac, nil
 }
 
@@ -741,7 +749,7 @@ func (db *DB) SaveAccessToken(token *models.AccessToken) error {
 	_, err := db.Exec(query,
 		token.Token, token.ClientID, token.UserID,
 		string(scopes), token.TokenType, token.DPoPJKT,
-		token.ExpiresAt, token.Revoked,
+		token.ExpiresAt, bitArg(token.Revoked),
 	)
 	return err
 }
@@ -752,11 +760,12 @@ func (db *DB) GetAccessToken(token string) (*models.AccessToken, error) {
 
 	at := &models.AccessToken{}
 	var scopes string
+	var revoked flag
 
 	err := db.QueryRow(query, token).Scan(
 		&at.Token, &at.ClientID, &at.UserID,
 		&scopes, &at.TokenType, &at.DPoPJKT,
-		&at.ExpiresAt, &at.Revoked,
+		&at.ExpiresAt, &revoked,
 	)
 	if err != nil {
 		return nil, err
@@ -765,6 +774,7 @@ func (db *DB) GetAccessToken(token string) (*models.AccessToken, error) {
 	if err := json.Unmarshal([]byte(scopes), &at.Scopes); err != nil {
 		return nil, err
 	}
+	at.Revoked = revoked.Bool()
 	return at, nil
 }
 
@@ -780,7 +790,7 @@ func (db *DB) SaveRefreshToken(token *models.RefreshToken) error {
 
 	_, err := db.Exec(query,
 		token.Token, token.AccessToken, token.ClientID,
-		token.UserID, string(scopes), token.ExpiresAt, token.Revoked,
+		token.UserID, string(scopes), token.ExpiresAt, bitArg(token.Revoked),
 	)
 	return err
 }
@@ -791,10 +801,11 @@ func (db *DB) GetRefreshToken(token string) (*models.RefreshToken, error) {
 
 	rt := &models.RefreshToken{}
 	var scopes string
+	var revoked flag
 
 	err := db.QueryRow(query, token).Scan(
 		&rt.Token, &rt.AccessToken, &rt.ClientID,
-		&rt.UserID, &scopes, &rt.ExpiresAt, &rt.Revoked,
+		&rt.UserID, &scopes, &rt.ExpiresAt, &revoked,
 	)
 	if err != nil {
 		return nil, err
@@ -803,6 +814,7 @@ func (db *DB) GetRefreshToken(token string) (*models.RefreshToken, error) {
 	if err := json.Unmarshal([]byte(scopes), &rt.Scopes); err != nil {
 		return nil, err
 	}
+	rt.Revoked = revoked.Bool()
 	return rt, nil
 }
 
@@ -1012,14 +1024,16 @@ func (db *DB) ListAccessTokens(clientID, userID string) ([]*models.AccessToken, 
 	for rows.Next() {
 		at := &models.AccessToken{}
 		var scopes string
+		var revoked flag
 		err := rows.Scan(
 			&at.Token, &at.ClientID, &at.UserID,
 			&scopes, &at.TokenType, &at.DPoPJKT,
-			&at.ExpiresAt, &at.Revoked,
+			&at.ExpiresAt, &revoked,
 		)
 		if err != nil {
 			return nil, err
 		}
+		at.Revoked = revoked.Bool()
 		if err := json.Unmarshal([]byte(scopes), &at.Scopes); err != nil {
 			return nil, err
 		}

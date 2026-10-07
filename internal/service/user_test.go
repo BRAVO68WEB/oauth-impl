@@ -2,13 +2,12 @@ package service
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/repository"
+	"github.com/bravo68web/oauth-impl/internal/testpg"
 	"github.com/bravo68web/oauth-impl/pkg/passhash"
 )
 
@@ -34,14 +33,7 @@ func (s scriptHasher) NeedsRehash(encoded string) bool {
 
 func newTestUserService(t *testing.T, hasher passhash.Hasher) (*UserService, *repository.UserRepository) {
 	t.Helper()
-	db, err := database.New(filepath.Join(t.TempDir(), "users.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
+	db := testpg.Open(t)
 	repo := repository.NewUserRepository(db)
 	cfg := config.DefaultConfig()
 	return NewUserService(repo, NewTOTPService(repo, &cfg.Security.MFA), &cfg.Security, hasher), repo
