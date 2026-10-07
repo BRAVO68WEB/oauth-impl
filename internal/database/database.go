@@ -410,6 +410,10 @@ func (db *DB) Migrate() error {
 		`ALTER TABLE refresh_tokens ADD COLUMN act TEXT`,
 		`ALTER TABLE clients ADD COLUMN subject_type TEXT NOT NULL DEFAULT 'public'`,
 		`ALTER TABLE clients ADD COLUMN sector_identifier_uri TEXT`,
+		`ALTER TABLE clients ADD COLUMN id_token_encrypted_response_alg TEXT`,
+		`ALTER TABLE clients ADD COLUMN id_token_encrypted_response_enc TEXT`,
+		`ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_alg TEXT`,
+		`ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_enc TEXT`,
 	}
 	for _, alter := range alters {
 		if _, err := db.Exec(alter); err != nil && db.driver == "postgres" && !isDuplicateColumn(err) {
@@ -488,7 +492,10 @@ func (db *DB) GetClient(id string) (*models.Client, error) {
 		token_endpoint_auth_method, dpop_bound_access_tokens,
 		require_pushed_authorization_requests, backchannel_token_delivery_mode,
 		backchannel_client_notification_endpoint, backchannel_authentication_request_signing_alg,
-		created_at, updated_at, COALESCE(subject_type, 'public'), COALESCE(sector_identifier_uri, '')
+		created_at, updated_at, COALESCE(jwks, ''), COALESCE(jwks_uri, ''),
+		COALESCE(subject_type, 'public'), COALESCE(sector_identifier_uri, ''),
+		COALESCE(id_token_encrypted_response_alg, ''), COALESCE(id_token_encrypted_response_enc, ''),
+		COALESCE(userinfo_encrypted_response_alg, ''), COALESCE(userinfo_encrypted_response_enc, '')
 		FROM clients WHERE id = ?`
 
 	client := &models.Client{}
@@ -501,7 +508,9 @@ func (db *DB) GetClient(id string) (*models.Client, error) {
 		&client.TokenEndpointAuthMethod, &dpopBound,
 		&requirePAR, &client.BackchannelTokenDeliveryMode,
 		&client.BackchannelClientNotificationEndpoint, &client.BackchannelAuthenticationRequestSigningAlg,
-		&client.CreatedAt, &client.UpdatedAt, &client.SubjectType, &client.SectorIdentifierURI,
+		&client.CreatedAt, &client.UpdatedAt, &client.JWKS, &client.JWKSUri, &client.SubjectType, &client.SectorIdentifierURI,
+		&client.IDTokenEncryptedResponseAlg, &client.IDTokenEncryptedResponseEnc,
+		&client.UserinfoEncryptedResponseAlg, &client.UserinfoEncryptedResponseEnc,
 	)
 	if err != nil {
 		return nil, err

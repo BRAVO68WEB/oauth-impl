@@ -118,6 +118,11 @@ func (c *ManagementController) HandleCreateClient(w http.ResponseWriter, r *http
 		CIMDEnabled                                bool     `json:"cimd_enabled"`
 		SubjectType                                string   `json:"subject_type"`
 		SectorIdentifierURI                        string   `json:"sector_identifier_uri"`
+		JWKS                                       string   `json:"jwks"`
+		IDTokenEncryptedResponseAlg                string   `json:"id_token_encrypted_response_alg"`
+		IDTokenEncryptedResponseEnc                string   `json:"id_token_encrypted_response_enc"`
+		UserinfoEncryptedResponseAlg               string   `json:"userinfo_encrypted_response_alg"`
+		UserinfoEncryptedResponseEnc               string   `json:"userinfo_encrypted_response_enc"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -143,6 +148,11 @@ func (c *ManagementController) HandleCreateClient(w http.ResponseWriter, r *http
 		CIMDEnabled:                                req.CIMDEnabled,
 		SubjectType:                                req.SubjectType,
 		SectorIdentifierURI:                        req.SectorIdentifierURI,
+		JWKS:                                       req.JWKS,
+		IDTokenEncryptedResponseAlg:                req.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:                req.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg:               req.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc:               req.UserinfoEncryptedResponseEnc,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -189,6 +199,11 @@ func (c *ManagementController) HandleUpdateClient(w http.ResponseWriter, r *http
 		CIMDEnabled                                *bool    `json:"cimd_enabled"`
 		SubjectType                                string   `json:"subject_type"`
 		SectorIdentifierURI                        *string  `json:"sector_identifier_uri"`
+		JWKS                                       *string  `json:"jwks"`
+		IDTokenEncryptedResponseAlg                *string  `json:"id_token_encrypted_response_alg"`
+		IDTokenEncryptedResponseEnc                *string  `json:"id_token_encrypted_response_enc"`
+		UserinfoEncryptedResponseAlg               *string  `json:"userinfo_encrypted_response_alg"`
+		UserinfoEncryptedResponseEnc               *string  `json:"userinfo_encrypted_response_enc"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -234,6 +249,21 @@ func (c *ManagementController) HandleUpdateClient(w http.ResponseWriter, r *http
 	}
 	if req.SectorIdentifierURI != nil {
 		existing.SectorIdentifierURI = *req.SectorIdentifierURI
+	}
+	if req.JWKS != nil {
+		existing.JWKS = *req.JWKS
+	}
+	if req.IDTokenEncryptedResponseAlg != nil {
+		existing.IDTokenEncryptedResponseAlg = *req.IDTokenEncryptedResponseAlg
+	}
+	if req.IDTokenEncryptedResponseEnc != nil {
+		existing.IDTokenEncryptedResponseEnc = *req.IDTokenEncryptedResponseEnc
+	}
+	if req.UserinfoEncryptedResponseAlg != nil {
+		existing.UserinfoEncryptedResponseAlg = *req.UserinfoEncryptedResponseAlg
+	}
+	if req.UserinfoEncryptedResponseEnc != nil {
+		existing.UserinfoEncryptedResponseEnc = *req.UserinfoEncryptedResponseEnc
 	}
 
 	if err := c.clientSvc.UpdateClient(existing); err != nil {

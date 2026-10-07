@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -110,7 +111,11 @@ func (h *Handler) CreateIDToken(clientID, userID, nonce string, scopes []string,
 		return "", err
 	}
 	key, kid := h.keySet.GetRSAKey()
-	return signIDToken(jwt.SigningMethodRS256, kid, key, claims)
+	signed, err := signIDToken(jwt.SigningMethodRS256, kid, key, claims)
+	if err != nil {
+		return "", err
+	}
+	return h.sealIDToken(clientID, signed)
 }
 
 func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes []string, extra ...IDTokenExtra) (string, error) {
@@ -119,7 +124,11 @@ func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes 
 		return "", err
 	}
 	key, kid := h.keySet.GetECKey()
-	return signIDToken(jwt.SigningMethodES256, kid, key, claims)
+	signed, err := signIDToken(jwt.SigningMethodES256, kid, key, claims)
+	if err != nil {
+		return "", err
+	}
+	return h.sealIDToken(clientID, signed)
 }
 
 // CreateAccessTokenJWT signs an access token with the active RSA key.
@@ -314,6 +323,16 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sealed, encrypted, err := h.sealUserInfo(at.ClientID, response)
+	if err != nil {
+		writeOIDCError(w, http.StatusBadRequest, "invalid_client", "Failed to encrypt UserInfo")
+		return
+	}
+	if encrypted {
+		w.Header().Set("Content-Type", "application/jwt")
+		_, _ = io.WriteString(w, sealed)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 }
@@ -386,6 +405,10 @@ func (h *Handler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint_auth_signing_alg_values_supported": []string{"RS256", "ES256"},
 		"subject_types_supported":                          []string{"public", "pairwise"},
 		"id_token_signing_alg_values_supported":            []string{"RS256", "ES256"},
+		"id_token_encryption_alg_values_supported":         []string{encAlgRSAOAEP256},
+		"id_token_encryption_enc_values_supported":         []string{encA256GCM},
+		"userinfo_encryption_alg_values_supported":         []string{encAlgRSAOAEP256},
+		"userinfo_encryption_enc_values_supported":         []string{encA256GCM},
 		"code_challenge_methods_supported":                 []string{"S256", "plain"},
 		"claims_supported":                                 h.cfg.OIDC.SupportedClaims,
 		"claims_parameter_supported":                       true,

@@ -39,8 +39,10 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		jwks, jwks_uri, request_object_signing_alg,
 		registration_source, dcr_enabled, cimd_enabled,
 		subject_type, sector_identifier_uri,
+		id_token_encrypted_response_alg, id_token_encrypted_response_enc,
+		userinfo_encrypted_response_alg, userinfo_encrypted_response_enc,
 		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.Exec(query,
 		client.ID, client.Secret, client.Name,
@@ -52,6 +54,8 @@ func (r *ClientRepository) Create(client *models.Client) error {
 		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		source, boolInt(client.DCREnabled), boolInt(client.CIMDEnabled),
 		client.SubjectType, client.SectorIdentifierURI,
+		client.IDTokenEncryptedResponseAlg, client.IDTokenEncryptedResponseEnc,
+		client.UserinfoEncryptedResponseAlg, client.UserinfoEncryptedResponseEnc,
 		client.CreatedAt, client.UpdatedAt,
 	)
 	return err
@@ -94,6 +98,8 @@ func (r *ClientRepository) Update(client *models.Client) error {
 		jwks=?, jwks_uri=?, request_object_signing_alg=?,
 		registration_source=?, dcr_enabled=?, cimd_enabled=?,
 		subject_type=?, sector_identifier_uri=?,
+		id_token_encrypted_response_alg=?, id_token_encrypted_response_enc=?,
+		userinfo_encrypted_response_alg=?, userinfo_encrypted_response_enc=?,
 		updated_at=?
 		WHERE id=?`
 
@@ -110,6 +116,8 @@ func (r *ClientRepository) Update(client *models.Client) error {
 		client.JWKS, client.JWKSUri, client.RequestObjectSigningAlg,
 		source, boolInt(client.DCREnabled), boolInt(client.CIMDEnabled),
 		subjectTypeOrPublic(client.SubjectType), client.SectorIdentifierURI,
+		client.IDTokenEncryptedResponseAlg, client.IDTokenEncryptedResponseEnc,
+		client.UserinfoEncryptedResponseAlg, client.UserinfoEncryptedResponseEnc,
 		time.Now(), client.ID,
 	)
 	return err
@@ -141,6 +149,8 @@ const clientSelect = `SELECT id, secret, name, redirect_uris, grant_types, scope
 	jwks, jwks_uri, request_object_signing_alg,
 	COALESCE(registration_source, 'management'), COALESCE(dcr_enabled, 0), COALESCE(cimd_enabled, 0),
 	COALESCE(subject_type, 'public'), COALESCE(sector_identifier_uri, ''),
+	COALESCE(id_token_encrypted_response_alg, ''), COALESCE(id_token_encrypted_response_enc, ''),
+	COALESCE(userinfo_encrypted_response_alg, ''), COALESCE(userinfo_encrypted_response_enc, ''),
 	created_at, updated_at
 	FROM clients`
 
@@ -160,6 +170,8 @@ func scanClient(scan func(dest ...any) error) (*models.Client, error) {
 		&jwks, &jwksUri, &reqObjAlg,
 		&source, &dcrEnabled, &cimdEnabled,
 		&client.SubjectType, &client.SectorIdentifierURI,
+		&client.IDTokenEncryptedResponseAlg, &client.IDTokenEncryptedResponseEnc,
+		&client.UserinfoEncryptedResponseAlg, &client.UserinfoEncryptedResponseEnc,
 		&client.CreatedAt, &client.UpdatedAt,
 	); err != nil {
 		return nil, err

@@ -28,6 +28,10 @@ type Client struct {
 	CIMDEnabled                                bool      `json:"cimd_enabled"`
 	SubjectType                                string    `json:"subject_type,omitempty"`
 	SectorIdentifierURI                        string    `json:"sector_identifier_uri,omitempty"`
+	IDTokenEncryptedResponseAlg                string    `json:"id_token_encrypted_response_alg,omitempty"`
+	IDTokenEncryptedResponseEnc                string    `json:"id_token_encrypted_response_enc,omitempty"`
+	UserinfoEncryptedResponseAlg               string    `json:"userinfo_encrypted_response_alg,omitempty"`
+	UserinfoEncryptedResponseEnc               string    `json:"userinfo_encrypted_response_enc,omitempty"`
 	CreatedAt                                  time.Time `json:"created_at"`
 	UpdatedAt                                  time.Time `json:"updated_at"`
 }

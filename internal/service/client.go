@@ -37,6 +37,11 @@ type CreateClientInput struct {
 	CIMDEnabled                                bool
 	SubjectType                                string
 	SectorIdentifierURI                        string
+	JWKS                                       string
+	IDTokenEncryptedResponseAlg                string
+	IDTokenEncryptedResponseEnc                string
+	UserinfoEncryptedResponseAlg               string
+	UserinfoEncryptedResponseEnc               string
 }
 
 func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, error) {
@@ -79,6 +84,11 @@ func (s *ClientService) CreateClient(input CreateClientInput) (*models.Client, e
 		CIMDEnabled:                                input.CIMDEnabled,
 		SubjectType:                                input.SubjectType,
 		SectorIdentifierURI:                        input.SectorIdentifierURI,
+		JWKS:                                       input.JWKS,
+		IDTokenEncryptedResponseAlg:                input.IDTokenEncryptedResponseAlg,
+		IDTokenEncryptedResponseEnc:                input.IDTokenEncryptedResponseEnc,
+		UserinfoEncryptedResponseAlg:               input.UserinfoEncryptedResponseAlg,
+		UserinfoEncryptedResponseEnc:               input.UserinfoEncryptedResponseEnc,
 		CreatedAt:                                  time.Now(),
 		UpdatedAt:                                  time.Now(),
 	}
