@@ -158,11 +158,61 @@ func (c *WebController) getSession(r *http.Request) *oauth.Session {
 
 // buildAuthorizeURL constructs /oauth/authorize URL with all OAuth params
 func (c *WebController) redirectAfterLogin(w http.ResponseWriter, r *http.Request, params map[string]string) {
-	if next := SafeNext(params["next"]); next != "" {
+	next := SafeNext(params["next"])
+	if isLocalURL(next) {
 		http.Redirect(w, r, next, http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, c.buildAuthorizeURL(params), http.StatusFound)
+}
+
+func (c *WebController) clientRedirects(clientID string) []string {
+	if c == nil || c.oauthHandler == nil {
+		return nil
+	}
+	return c.oauthHandler.ClientRedirectURIs(clientID)
+}
+
+// isValidRedirectURL reports whether a redirect target is https, or http on localhost.
+func isValidRedirectURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return false
+	}
+	switch parsed.Scheme {
+	case "https":
+		return parsed.Hostname() != ""
+	case "http":
+		host := parsed.Hostname()
+		return host == "localhost" || host == "127.0.0.1"
+	default:
+		return false
+	}
+}
+
+// isValidRedirectURI reports whether uri is one of the client's registered redirect URIs.
+func isValidRedirectURI(uri string, allowed []string) bool {
+	if uri == "" || strings.ContainsAny(uri, "\r\n\\") {
+		return false
+	}
+	for _, item := range allowed {
+		if item == uri {
+			return true
+		}
+	}
+	return false
+}
+
+// isLocalURL allows only the same-origin paths SafeNext returns.
+func isLocalURL(raw string) bool {
+	if raw == "" || strings.HasPrefix(raw, "//") || strings.Contains(raw, "\\") {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" {
+		return false
+	}
+	return parsed.Path == "/device" || parsed.Path == "/oauth/authorize"
 }
 
 func (c *WebController) buildAuthorizeURL(params map[string]string) string {
@@ -715,17 +765,23 @@ func (c *WebController) HandleConsent(w http.ResponseWriter, r *http.Request) {
 	if action == "deny" {
 		redirectURI := params["redirect_uri"]
 		state := params["state"]
-		errorURL := redirectURI
-		if strings.Contains(errorURL, "?") {
-			errorURL += "&"
-		} else {
-			errorURL += "?"
+		if isValidRedirectURI(redirectURI, c.clientRedirects(params["client_id"])) {
+			errorURL := redirectURI
+			if strings.Contains(errorURL, "?") {
+				errorURL += "&"
+			} else {
+				errorURL += "?"
+			}
+			errorURL += "error=access_denied&error_description=User+denied+the+request"
+			if state != "" {
+				errorURL += "&state=" + url.QueryEscape(state)
+			}
+			if isValidRedirectURL(errorURL) {
+				http.Redirect(w, r, errorURL, http.StatusFound)
+				return
+			}
 		}
-		errorURL += "error=access_denied&error_description=User+denied+the+request"
-		if state != "" {
-			errorURL += "&state=" + state
-		}
-		http.Redirect(w, r, errorURL, http.StatusFound)
+		http.Error(w, "Invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
 

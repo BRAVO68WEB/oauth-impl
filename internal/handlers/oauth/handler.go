@@ -127,6 +127,20 @@ func (h *Handler) ClientName(id string) string {
 	return client.Name
 }
 
+// ClientRedirectURIs returns the redirect URIs registered for a client.
+func (h *Handler) ClientRedirectURIs(id string) []string {
+	if h == nil || id == "" {
+		return nil
+	}
+	client, code, _ := h.resolveClient(id, "")
+	if code != "" || client == nil {
+		return nil
+	}
+	out := make([]string, len(client.RedirectURIs))
+	copy(out, client.RedirectURIs)
+	return out
+}
+
 func (h *Handler) SetCache(c cache.Cache) {
 	if h != nil && c != nil {
 		h.cimd = c
