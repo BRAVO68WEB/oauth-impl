@@ -2,20 +2,22 @@ const assert = require("node:assert/strict");
 const { startServer } = require("../support/server");
 const { pkcePair, shortID } = require("../support/pkce");
 const { createUser, createClient, tokenRequest } = require("../support/oauth");
-const { newPage, authorize, closeBrowser } = require("../support/browser");
+const { newPage, authorize, closeBrowser, callbackURL } = require("../support/browser");
 
 describe("PKCE required", function () {
   let server;
   let user;
   let client;
+  let redirectURI;
 
   before(async function () {
     this.timeout(60000);
     server = await startServer({ security: { require_pkce: true } });
     user = await createUser(server, { username: shortID("pkce") });
+    redirectURI = await callbackURL();
     client = await createClient(server, {
       name: "PKCE",
-      redirect_uris: ["http://localhost/cb"],
+      redirect_uris: [redirectURI],
       grant_types: ["authorization_code"],
       scopes: ["openid", "profile"],
     });
@@ -31,7 +33,7 @@ describe("PKCE required", function () {
   it("rejects an authorization request without a code challenge", async function () {
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", client.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid");
     const response = await fetch(url);
@@ -45,7 +47,7 @@ describe("PKCE required", function () {
     const pkce = pkcePair();
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", client.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid");
     url.searchParams.set("code_challenge", pkce.challenge);
@@ -55,7 +57,7 @@ describe("PKCE required", function () {
     const issued = await tokenRequest(server.base, {
       grant_type: "authorization_code",
       code: callback.searchParams.get("code"),
-      redirect_uri: "http://localhost/cb",
+      redirect_uri: redirectURI,
       code_verifier: pkce.verifier,
     }, { id: client.id, secret: client.secret });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));

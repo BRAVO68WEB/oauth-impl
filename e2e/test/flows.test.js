@@ -4,7 +4,7 @@ const { pkcePair, shortID } = require("../support/pkce");
 const {
   createUser, createClient, tokenRequest, introspect, revoke, userInfo, decodeJwt, readBody,
 } = require("../support/oauth");
-const { newPage, authorize, closeBrowser, submitLogin, waitForCallback } = require("../support/browser");
+const { newPage, authorize, closeBrowser, submitLogin, waitForCallback, callbackURL } = require("../support/browser");
 
 describe("standard OAuth flows", function () {
   let server;
@@ -15,12 +15,14 @@ describe("standard OAuth flows", function () {
   let passwordApp;
   let deviceApp;
   let parApp;
+  let redirectURI;
 
   before(async function () {
     this.timeout(60000);
     server = await startServer();
     user = await createUser(server, { username: shortID("flow") });
-    const redirect = ["http://localhost/cb"];
+    redirectURI = await callbackURL();
+    const redirect = [redirectURI];
     web = await createClient(server, {
       name: "Web",
       redirect_uris: redirect,
@@ -93,7 +95,7 @@ describe("standard OAuth flows", function () {
     const nonce = "nonce-1";
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", web.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid profile");
     url.searchParams.set("state", state);
@@ -108,7 +110,7 @@ describe("standard OAuth flows", function () {
     const issued = await tokenRequest(server.base, {
       grant_type: "authorization_code",
       code,
-      redirect_uri: "http://localhost/cb",
+      redirect_uri: redirectURI,
       code_verifier: pkce.verifier,
     }, { id: web.id, secret: web.secret });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));
@@ -122,7 +124,7 @@ describe("standard OAuth flows", function () {
     const quiet = pkcePair();
     const again = new URL(`${server.base}/oauth/authorize`);
     again.searchParams.set("client_id", web.id);
-    again.searchParams.set("redirect_uri", "http://localhost/cb");
+    again.searchParams.set("redirect_uri", redirectURI);
     again.searchParams.set("response_type", "code");
     again.searchParams.set("scope", "openid profile");
     again.searchParams.set("prompt", "none");
@@ -154,7 +156,7 @@ describe("standard OAuth flows", function () {
     const pkce = pkcePair();
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", publicClient.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid profile");
     url.searchParams.set("code_challenge", pkce.challenge);
@@ -169,7 +171,7 @@ describe("standard OAuth flows", function () {
     const pkce = pkcePair();
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", publicClient.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid");
     url.searchParams.set("prompt", "consent");
@@ -179,7 +181,7 @@ describe("standard OAuth flows", function () {
     const issued = await tokenRequest(server.base, {
       grant_type: "authorization_code",
       code: callback.searchParams.get("code"),
-      redirect_uri: "http://localhost/cb",
+      redirect_uri: redirectURI,
       code_verifier: pkce.verifier,
     }, { id: publicClient.id });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));
@@ -234,7 +236,7 @@ describe("standard OAuth flows", function () {
       },
       body: new URLSearchParams({
         response_type: "code",
-        redirect_uri: "http://localhost/cb",
+        redirect_uri: redirectURI,
         scope: "openid profile",
         code_challenge: pkce.challenge,
         code_challenge_method: pkce.method,
@@ -249,7 +251,7 @@ describe("standard OAuth flows", function () {
     const issued = await tokenRequest(server.base, {
       grant_type: "authorization_code",
       code: callback.searchParams.get("code"),
-      redirect_uri: "http://localhost/cb",
+      redirect_uri: redirectURI,
       code_verifier: pkce.verifier,
     }, { id: parApp.id, secret: parApp.secret });
     assert.equal(issued.status, 200, JSON.stringify(issued.body));
@@ -261,7 +263,7 @@ describe("standard OAuth flows", function () {
     const pkce = pkcePair();
     const url = new URL(`${server.base}/oauth/authorize`);
     url.searchParams.set("client_id", web.id);
-    url.searchParams.set("redirect_uri", "http://localhost/cb");
+    url.searchParams.set("redirect_uri", redirectURI);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid");
     url.searchParams.set("code_challenge", pkce.challenge);
@@ -273,7 +275,7 @@ describe("standard OAuth flows", function () {
     const next = pkcePair();
     const again = new URL(`${server.base}/oauth/authorize`);
     again.searchParams.set("client_id", web.id);
-    again.searchParams.set("redirect_uri", "http://localhost/cb");
+    again.searchParams.set("redirect_uri", redirectURI);
     again.searchParams.set("response_type", "code");
     again.searchParams.set("scope", "openid");
     again.searchParams.set("code_challenge", next.challenge);
@@ -289,7 +291,7 @@ describe("standard OAuth flows", function () {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_name: "Dynamic",
-        redirect_uris: ["http://localhost/cb"],
+        redirect_uris: [redirectURI],
         grant_types: ["client_credentials"],
         scope: "openid",
       }),
