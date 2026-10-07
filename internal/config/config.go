@@ -26,6 +26,14 @@ type Config struct {
 	Social       SocialConfig       `yaml:"social"`
 	Registration RegistrationConfig `yaml:"registration"`
 	Telemetry    TelemetryConfig    `yaml:"telemetry"`
+	Org          OrgConfig          `yaml:"org"`
+}
+
+// OrgConfig turns organizations on. Both flags stay false unless set, so a
+// default server never selects an organization.
+type OrgConfig struct {
+	Enabled                      bool `yaml:"enabled"`
+	EnabledDomainBasedAutolookup bool `yaml:"enabled_domain_based_autolookup"`
 }
 
 // TelemetryConfig controls OpenTelemetry traces. Enabled is false unless
@@ -599,7 +607,7 @@ func ValidateSocial(cfg *Config) error {
 
 var reservedClaims = map[string]bool{
 	"iss": true, "sub": true, "aud": true, "exp": true, "iat": true, "nbf": true,
-	"nonce": true, "sid": true, "auth_time": true,
+	"nonce": true, "sid": true, "auth_time": true, "org_id": true, "org_slug": true,
 }
 
 var claimSources = map[string]bool{
@@ -661,6 +669,9 @@ func ValidatePlatform(cfg *Config) error {
 		if cfg.Telemetry.SampleRatio <= 0 || cfg.Telemetry.SampleRatio > 1 {
 			return fmt.Errorf("telemetry.sample_ratio must be greater than 0 and at most 1")
 		}
+	}
+	if cfg.Org.EnabledDomainBasedAutolookup && !cfg.Org.Enabled {
+		return fmt.Errorf("org.enabled_domain_based_autolookup requires org.enabled")
 	}
 	for _, m := range cfg.OIDC.ClaimMappings {
 		if m.Claim == "" || reservedClaims[m.Claim] {

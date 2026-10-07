@@ -202,6 +202,12 @@ Traces stay off until `telemetry.enabled` is true. The server then
 sends OTLP/HTTP spans to `telemetry.otlp_endpoint`. An enabled block
 with an empty endpoint is a startup error.
 
+Organizations stay off until `org.enabled` is true. Set
+`org.enabled_domain_based_autolookup` to choose an organization from
+the user's email domain when the request does not name one. That
+lookup still requires the user to be a member of the matching
+organization.
+
 ### Config Structure
 
 ```yaml
@@ -212,6 +218,10 @@ server:
     enabled: false
     cert_file: ""
     key_file: ""
+
+org:
+  enabled: false
+  enabled_domain_based_autolookup: false
 
 telemetry:
   enabled: false

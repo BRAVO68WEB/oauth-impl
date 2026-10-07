@@ -105,6 +105,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Templates**: Go `html/template` in `internal/templates/`. `branding.templates` replaces a page by file name at startup. `docs.html` is not part of the auth chrome. Editing the embedded HTML does not change a built `bin/oauth-server` until the next build; the overlay directory does, after a restart.
 - **OpenAPI**: Spec in `openapi/spec.yaml`, Scalar UI at `/docs`
 - **Traces**: `telemetry.enabled` is false unless set. When it is true, `telemetry.otlp_endpoint` is required and the server exports OTLP/HTTP spans. Span attributes are `client_id`, `grant_type`, `org_id`, and `oauth.error`. Tokens, codes, and secrets are not span attributes.
+- **Organizations**: `org.enabled` is false unless set. `org.enabled_domain_based_autolookup` requires `org.enabled`. When autolookup is on and the authorize or password request omits `organization`, a member whose email domain matches an organization domain receives that `org_id`. An explicit organization still requires membership.
 
 ## OAuth Flows Implemented
 
