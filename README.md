@@ -198,6 +198,10 @@ file exists. If you pass `-config` and that file is missing, the
 server exits. With no flag and no `config.yaml`, the server uses
 built-in defaults.
 
+Traces stay off until `telemetry.enabled` is true. The server then
+sends OTLP/HTTP spans to `telemetry.otlp_endpoint`. An enabled block
+with an empty endpoint is a startup error.
+
 ### Config Structure
 
 ```yaml
@@ -208,6 +212,13 @@ server:
     enabled: false
     cert_file: ""
     key_file: ""
+
+telemetry:
+  enabled: false
+  service_name: oauth-server
+  otlp_endpoint: ""
+  insecure: false
+  sample_ratio: 1
 
 database:
   path: "./oauth.db"

@@ -104,6 +104,7 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Webhooks**: `webhooks` table. Management CRUD at `/api/webhooks`. Each row lists events (`login`, `logout`, `sso_session_triggered`, `bruteforce_detected`, `forgot_password`, `change_password`, and others). Delivery is HMAC-SHA256 in `X-Webhook-Signature` and does not fail the user action.
 - **Templates**: Go `html/template` in `internal/templates/`. `branding.templates` replaces a page by file name at startup. `docs.html` is not part of the auth chrome. Editing the embedded HTML does not change a built `bin/oauth-server` until the next build; the overlay directory does, after a restart.
 - **OpenAPI**: Spec in `openapi/spec.yaml`, Scalar UI at `/docs`
+- **Traces**: `telemetry.enabled` is false unless set. When it is true, `telemetry.otlp_endpoint` is required and the server exports OTLP/HTTP spans. Span attributes are `client_id`, `grant_type`, `org_id`, and `oauth.error`. Tokens, codes, and secrets are not span attributes.
 
 ## OAuth Flows Implemented
 
@@ -170,3 +171,4 @@ Key external packages:
 - `github.com/jackc/pgx/v5` - Postgres driver
 - `github.com/redis/go-redis/v9` - Redis client
 - `golang.org/x/crypto` - bcrypt and argon2id password hashing
+- `go.opentelemetry.io/otel` - optional OTLP/HTTP traces

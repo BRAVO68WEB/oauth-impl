@@ -32,6 +32,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/route"
 	"github.com/bravo68web/oauth-impl/internal/service"
+	"github.com/bravo68web/oauth-impl/internal/telemetry"
 	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
 
@@ -187,6 +188,7 @@ func New(cfg *config.Config, db *database.DB, q queue.Queue) (*Server, error) {
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
 
+	r.Use(telemetry.Middleware)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)

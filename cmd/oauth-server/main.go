@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
@@ -26,6 +27,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/route"
 	"github.com/bravo68web/oauth-impl/internal/service"
+	"github.com/bravo68web/oauth-impl/internal/telemetry"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -80,6 +82,17 @@ func main() {
 	if err := service.ValidateTrustedProxies(cfg.Security.TrustedProxies); err != nil {
 		log.Fatalf("trusted proxies: %v", err)
 	}
+	shutdownTrace, err := telemetry.Setup(context.Background(), &cfg.Telemetry)
+	if err != nil {
+		log.Fatalf("telemetry: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), telemetry.ShutdownTimeout)
+		defer cancel()
+		if err := shutdownTrace(ctx); err != nil {
+			log.Printf("telemetry shutdown: %v", err)
+		}
+	}()
 	hasher, err := hashalgo.Prepare(wd, os.Getenv("HASH_ALGO"), cfg.Security.HashAlgo)
 	if err != nil {
 		log.Fatalf("password hasher: %v", err)
