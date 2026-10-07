@@ -236,6 +236,89 @@ paths:
         "200":
           description: Login analytics
 
+  /api/orgs:
+    get:
+      tags: [Management]
+      summary: List organizations
+      description: Requires `org.enabled`. A management client bound to an organization receives only that organization.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Organizations
+        "403":
+          description: Organizations are disabled or the token is not a management client
+    post:
+      tags: [Management]
+      summary: Create an organization
+      description: |
+        Body is `name`, `slug`, and optional `domains`. A management client bound
+        to an organization cannot create another organization.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201":
+          description: Created organization
+        "400":
+          description: Invalid name, slug, or domain
+        "403":
+          description: Organizations are disabled or the client cannot create organizations
+
+  /api/orgs/{orgID}:
+    get:
+      tags: [Management]
+      summary: Get an organization
+      description: "`orgID` is the organization id or slug."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: orgID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Organization
+        "403":
+          description: The management client is limited to a different organization
+        "404":
+          description: Organization not found
+
+  /api/orgs/{orgID}/domains:
+    post:
+      tags: [Management]
+      summary: Add an email domain to an organization
+      description: Body is `domain`, a bare hostname. A bound organization client cannot change domains.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: orgID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Organization including the new domain
+        "400":
+          description: Invalid domain
+        "403":
+          description: The client cannot change domains
+
+  /api/orgs/{orgID}/members:
+    post:
+      tags: [Management]
+      summary: Add a user to an organization
+      description: Body is `user_id` and optional `role` (`member` or `admin`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: orgID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "201":
+          description: Membership created
+        "400":
+          description: Missing user or invalid role
+        "404":
+          description: Organization not found
+
   /api/webhooks:
     get:
       tags: [Management]
