@@ -82,6 +82,19 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+func writeProfileError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, service.ErrEmailRequired):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return true
+	case errors.Is(err, service.ErrEmailTaken):
+		writeError(w, http.StatusConflict, "already_exists", err.Error())
+		return true
+	default:
+		return false
+	}
+}
+
 func writeError(w http.ResponseWriter, status int, code, description string) {
 	writeJSON(w, status, map[string]string{
 		"error":             code,
@@ -362,8 +375,7 @@ func (c *ManagementController) HandlePatchUser(w http.ResponseWriter, r *http.Re
 	wasDisabled := user.Disabled
 	applyProfile(user, req.userPatch)
 	if err := c.userSvc.UpdateProfile(user); err != nil {
-		if err.Error() == "email already exists" || err.Error() == "email is required" {
-			writeError(w, http.StatusConflict, "already_exists", err.Error())
+		if writeProfileError(w, err) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "server_error", "Failed to update user")

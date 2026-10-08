@@ -45,10 +45,10 @@ func (h *Handler) sealUserInfo(clientID string, claims map[string]any) (string, 
 }
 
 func (h *Handler) loadClient(id string) (*models.Client, error) {
-	if h == nil || h.db == nil || id == "" {
+	if h == nil || h.clients == nil || id == "" {
 		return nil, nil
 	}
-	return h.db.GetClient(id)
+	return h.clients.GetByID(id)
 }
 
 func (h *Handler) encryptNested(client *models.Client, signed, alg, enc string) (string, error) {

@@ -34,11 +34,7 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	clientID, clientSecret, ok := r.BasicAuth()
-	if !ok {
-		clientID = r.Form.Get("client_id")
-		clientSecret = r.Form.Get("client_secret")
-	}
+	clientID, clientSecret := presentedClient(r)
 
 	if clientID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -57,7 +53,7 @@ func (h *Handler) HandleDeviceAuthorization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if client.TokenEndpointAuthMethod != "none" && client.Secret != clientSecret {
+	if authenticateClient(client, clientID, clientSecret, false) != "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{
 			"error":             "invalid_client",
 			"error_description": "Invalid client credentials",
@@ -172,11 +168,7 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID, clientSecret, ok := r.BasicAuth()
-	if !ok {
-		clientID = r.Form.Get("client_id")
-		clientSecret = r.Form.Get("client_secret")
-	}
+	clientID, clientSecret := presentedClient(r)
 
 	dc, err := h.deviceRepo.GetByDeviceCode(deviceCode)
 	if err != nil {
@@ -194,11 +186,9 @@ func (h *Handler) HandleDeviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if client.TokenEndpointAuthMethod != "none" {
-		if clientID != dc.ClientID || clientSecret != client.Secret {
-			writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
-			return
-		}
+	if authenticateClient(client, clientID, clientSecret, true) != "" {
+		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
+		return
 	}
 
 	switch dc.Status {

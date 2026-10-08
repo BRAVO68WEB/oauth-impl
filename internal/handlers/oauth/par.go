@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -31,11 +30,7 @@ func (h *Handler) HandlePAR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID, clientSecret, ok := r.BasicAuth()
-	if !ok {
-		clientID = r.Form.Get("client_id")
-		clientSecret = r.Form.Get("client_secret")
-	}
+	clientID, clientSecret := presentedClient(r)
 
 	// Check for JAR request parameter
 	requestJWT := r.Form.Get("request")
@@ -72,7 +67,7 @@ func (h *Handler) HandlePAR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if client.TokenEndpointAuthMethod != "none" && client.Secret != clientSecret {
+	if authenticateClient(client, clientID, clientSecret, false) != "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{
 			"error":             "invalid_client",
 			"error_description": "Invalid client credentials",
@@ -217,86 +212,4 @@ func (h *Handler) HandlePAR(w http.ResponseWriter, r *http.Request) {
 		"request_uri": requestURI,
 		"expires_in":  int(h.cfg.Security.RequestURILifetime.Seconds()),
 	})
-}
-
-func (h *Handler) HandlePARAuthorize(w http.ResponseWriter, r *http.Request) {
-	requestURI := r.URL.Query().Get("request_uri")
-	clientID := r.URL.Query().Get("client_id")
-
-	if requestURI == "" {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "request_uri is required", "")
-		return
-	}
-
-	par, err := h.parRepo.GetByRequestURI(requestURI)
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "Invalid request_uri", "")
-		return
-	}
-
-	if time.Now().After(par.ExpiresAt) {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "request_uri expired", "")
-		return
-	}
-
-	if clientID != "" && clientID != par.ClientID {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_id mismatch", "")
-		return
-	}
-
-	var params map[string]string
-	if err := json.Unmarshal([]byte(par.RequestParams), &params); err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to parse request parameters", "")
-		return
-	}
-
-	state := params["state"]
-	redirectURI := params["redirect_uri"]
-	codeChallenge := params["code_challenge"]
-	codeChallengeMethod := params["code_challenge_method"]
-	scope := params["scope"]
-
-	code, err := crypto.GenerateAuthorizationCode()
-	if err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate authorization code", state)
-		return
-	}
-
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		userID = params["user_id"]
-	}
-	if userID == "" {
-		userID = "default-user"
-	}
-
-	authCode := &models.AuthorizationCode{
-		Code:                code,
-		ClientID:            par.ClientID,
-		UserID:              userID,
-		RedirectURI:         redirectURI,
-		Scopes:              crypto.NormalizeScopes(scope),
-		CodeChallenge:       codeChallenge,
-		CodeChallengeMethod: codeChallengeMethod,
-		ExpiresAt:           time.Now().Add(h.cfg.Security.AuthorizationCodeLifetime),
-		Used:                false,
-	}
-
-	if err := h.authCodeRepo.Save(authCode); err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to save authorization code", state)
-		return
-	}
-
-	params_str := fmt.Sprintf("code=%s", code)
-	if state != "" {
-		params_str += fmt.Sprintf("&state=%s", state)
-	}
-
-	if strings.Contains(redirectURI, "?") {
-		redirectURI += "&" + params_str
-	} else {
-		redirectURI += "?" + params_str
-	}
-
-	http.Redirect(w, r, redirectURI, http.StatusFound)
 }

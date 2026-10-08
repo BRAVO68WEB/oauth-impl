@@ -10,24 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	root "github.com/bravo68web/oauth-impl"
-	"github.com/bravo68web/oauth-impl/internal/auth"
+	"github.com/bravo68web/oauth-impl/internal/app"
 	"github.com/bravo68web/oauth-impl/internal/cache"
 	"github.com/bravo68web/oauth-impl/internal/config"
-	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/database"
-	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
-	"github.com/bravo68web/oauth-impl/internal/hashalgo"
-	"github.com/bravo68web/oauth-impl/internal/mailer"
-	"github.com/bravo68web/oauth-impl/internal/oidc"
 	"github.com/bravo68web/oauth-impl/internal/queue"
-	"github.com/bravo68web/oauth-impl/internal/repository"
-	"github.com/bravo68web/oauth-impl/internal/route"
-	"github.com/bravo68web/oauth-impl/internal/service"
 	"github.com/bravo68web/oauth-impl/internal/telemetry"
 	"github.com/redis/go-redis/v9"
 )
@@ -66,23 +56,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("Failed to get working directory: %v", err)
-	}
 	cfg.Normalize()
-	if err := config.ValidateBranding(cfg); err != nil {
-		log.Fatalf("branding: %v", err)
-	}
-	if err := config.ValidateSocial(cfg); err != nil {
-		log.Fatalf("social login: %v", err)
-	}
-	if err := config.ValidatePlatform(cfg); err != nil {
-		log.Fatalf("platform: %v", err)
-	}
-	if err := service.ValidateTrustedProxies(cfg.Security.TrustedProxies); err != nil {
-		log.Fatalf("trusted proxies: %v", err)
-	}
 	shutdownTrace, err := telemetry.Setup(context.Background(), &cfg.Telemetry)
 	if err != nil {
 		log.Fatalf("telemetry: %v", err)
@@ -94,11 +68,6 @@ func main() {
 			log.Printf("telemetry shutdown: %v", err)
 		}
 	}()
-	hasher, err := hashalgo.Prepare(wd, os.Getenv("HASH_ALGO"), cfg.Security.HashAlgo)
-	if err != nil {
-		log.Fatalf("password hasher: %v", err)
-	}
-	log.Printf("password hasher: %s (%s)", hasher.ID(), hashalgo.CanonicalRel)
 
 	if *port > 0 {
 		cfg.Server.Port = *port
@@ -125,69 +94,14 @@ func main() {
 		log.Println("Database migrations completed")
 	}
 
-	conn := db
-	if err := service.SeedManagementClient(repository.NewClientRepository(conn), cfg); err != nil {
-		log.Fatalf("management client: %v", err)
-	}
-	if strings.TrimSpace(cfg.OIDC.PairwiseSalt) == "" {
-		n, err := repository.NewClientRepository(conn).CountPairwise()
-		if err != nil {
-			log.Fatalf("pairwise clients: %v", err)
-		}
-		if n > 0 {
-			log.Fatal("oidc.pairwise_salt is required when a client uses subject_type pairwise")
-		}
-	}
-
-	// Repositories
-	clientRepo := repository.NewClientRepository(conn)
-	userRepo := repository.NewUserRepository(conn)
-	tokenRepo := repository.NewTokenRepository(conn)
-	authCodeRepo := repository.NewAuthCodeRepository(conn)
-	deviceRepo := repository.NewDeviceCodeRepository(conn)
-	cibaRepo := repository.NewCIBARepository(conn)
-	parRepo := repository.NewPARRepository(conn)
-	consentRepo := repository.NewConsentRepository(conn)
-	scopeRepo := repository.NewScopeRepository(conn)
-	resourceRepo := repository.NewResourceRepository(conn)
-	sessionRepo := repository.NewSessionRepository(conn)
-	emailTokens := repository.NewEmailTokenRepository(conn)
-	loginEvents := repository.NewLoginEventRepository(conn)
-
-	// OIDC handler (generates RSA + EC keys on startup)
-	oidcHandler, err := oidc.NewHandler(db, cfg)
-	if err != nil {
-		log.Fatalf("Failed to create OIDC handler: %v", err)
-	}
-
-	mail, err := mailer.New(cfg.SMTP)
-	if err != nil {
-		log.Fatalf("smtp: %v", err)
-	}
-
 	var rdb *redis.Client
-	if cfg.Cache.Provider == "redis" || cfg.Queue.Type == "redis" {
+	if cfg.Queue.Type == "redis" {
 		rdb, err = cache.NewClient(cfg.Redis)
 		if err != nil {
 			log.Fatalf("redis: %v", err)
 		}
 		defer func() { _ = rdb.Close() }()
 	}
-	store := cache.Cache(cache.NewMemory())
-	if cfg.Cache.Provider == "redis" {
-		store = cache.NewRedis(rdb, cfg.Redis.Prefix)
-	}
-	oidcHandler.SetSectorCache(store)
-	oidcHandler.SetSectorFetch(func(ctx context.Context, rawURL string) ([]byte, error) {
-		body, status, err := service.FetchSafe(ctx, cfg, http.MethodGet, rawURL, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-		if status != http.StatusOK {
-			return nil, fmt.Errorf("sector document returned %d", status)
-		}
-		return body, nil
-	})
 	var q queue.Queue
 	switch cfg.Queue.Type {
 	case "", "memory":
@@ -198,71 +112,11 @@ func main() {
 		log.Fatalf("queue.type must be memory or redis")
 	}
 
-	// Services
-	totpSvc := service.NewTOTPService(userRepo, &cfg.Security.MFA)
-	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security, hasher)
-	clientSvc := service.NewClientService(clientRepo)
-	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
-	dpopSvc := service.NewDPoPServiceWithCache(store)
-	mtlsSvc := service.NewMTLSService()
-	jarSvc := service.NewJARService(cfg.Security.Issuer)
-	sessionSvc := service.NewSessionService(sessionRepo, cfg.Security.SessionLifetime)
-	logoutSvc := service.NewLogoutService(sessionSvc, clientRepo, oidcHandler)
-	accountSvc := service.NewAccountService(userSvc, userRepo, emailTokens, loginEvents, sessionSvc, tokenRepo, mail, logoutSvc, cfg)
-	mailTemplates, err := mailer.Load(cfg.Email.TemplatesDir)
+	built, err := app.Build(cfg, db, q)
 	if err != nil {
-		log.Fatalf("email templates: %v", err)
+		log.Fatalf("server: %v", err)
 	}
-	accountSvc.SetTemplates(mailTemplates)
-	hooks := service.NewWebhookDispatcher(repository.NewWebhookRepository(conn))
-	hooks.SetFetchConfig(cfg)
-	logoutSvc.SetFetchConfig(cfg)
-	accountSvc.SetWebhooks(hooks)
-	logoutSvc.SetWebhooks(hooks)
-	oidcHandler.SetDPoPCheck(func(header, method, uri, accessToken string) error {
-		_, err := dpopSvc.ValidateDPoPProof(header, method, uri, accessToken)
-		return err
-	})
-	oidc.StartRotation(oidcHandler.GetKeySet(), cfg.OIDC.KeyRotationInterval, cfg.OIDC.KeyRetain)
-
-	// Load CRL if configured
-	if cfg.Server.TLS.CRLFile != "" {
-		if err := mtlsSvc.SetCRLPath(cfg.Server.TLS.CRLFile); err != nil {
-			log.Printf("WARNING: Failed to load CRL: %v", err)
-		} else {
-			log.Printf("CRL loaded from %s", cfg.Server.TLS.CRLFile)
-		}
-	}
-
-	// OAuth handler
-	oauthHandler := oauth.NewHandler(clientRepo, userRepo, tokenRepo, authCodeRepo, deviceRepo, cibaRepo, parRepo, consentRepo, dpopSvc, mtlsSvc, jarSvc, cfg, q, oidcHandler, userSvc, sessionSvc, logoutSvc, accountSvc)
-	oauthHandler.SetCache(store)
-	oauthHandler.SetWebhooks(hooks)
-	orgs := service.NewOrgService(repository.NewOrgRepository(conn), cfg)
-	oauthHandler.SetOrgs(orgs)
-
-	// Controllers
-	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo, accountSvc, sessionSvc, tokenRepo)
-	auditLog := service.NewAuditLog(repository.NewAuditRepository(conn))
-	mgmtCtrl.SetOrgs(orgs)
-	mgmtCtrl.SetWebhooks(hooks)
-	mgmtCtrl.SetAudit(auditLog)
-	mgmtCtrl.SetKeys(oidcHandler.GetKeySet(), cfg.OIDC.KeyRetain)
-	oauthHandler.SetAudit(auditLog)
-	webCtrl, err := controller.NewWebController(userSvc, totpSvc, accountSvc, cfg, root.TemplateFS, oauthHandler)
-	if err != nil {
-		log.Fatalf("Failed to create web controller: %v", err)
-	}
-	webCtrl.SetAudit(auditLog)
-	webCtrl.SetSocial(service.NewSocialService(cfg, userSvc, userRepo, repository.NewSocialRepository(conn), accountSvc, nil))
-	oauthHandler.SetTemplates(webCtrl.Templates())
-	accountCtrl := controller.NewAccountController(accountSvc, userSvc, sessionSvc, tokenRepo, totpSvc, oauthHandler, webCtrl.Templates(), cfg)
-	accountCtrl.SetAudit(auditLog)
-	authn := auth.NewMiddleware(tokenRepo, clientRepo, userRepo, dpopSvc)
-
-	// Router
-	router := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
-	router.SetContentSecurityPolicy(service.ContentSecurityPolicy(cfg.Security.BotProtection.Provider))
+	defer built.Close()
 
 	// Build TLS config
 	tlsConfig := &tls.Config{
@@ -301,7 +155,7 @@ func main() {
 	// HTTP server
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:      router.GetMux(),
+		Handler:      built.Mux,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,

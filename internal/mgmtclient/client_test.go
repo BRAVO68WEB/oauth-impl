@@ -1,4 +1,4 @@
-package main
+package mgmtclient
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestAPIRequestSetsBearer(t *testing.T) {
+func TestGetSetsBearer(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/oauth/token") {
@@ -21,13 +21,13 @@ func TestAPIRequestSetsBearer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	serverURL = srv.URL
-	mgmtClientID = "mgmt"
-	mgmtClientSecret = "secret"
-	mgmt.ClearToken()
-	configPath = filepath.Join(t.TempDir(), "missing.yaml")
-
-	resp, err := apiGet(srv.URL + "/api/users")
+	client := &Client{
+		ServerURL:    srv.URL,
+		ClientID:     "mgmt",
+		ClientSecret: "secret",
+		ConfigPath:   filepath.Join(t.TempDir(), "missing.yaml"),
+	}
+	resp, err := client.Get(srv.URL + "/api/users")
 	if err != nil {
 		t.Fatal(err)
 	}

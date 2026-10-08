@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -313,34 +312,4 @@ func generateJTI() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// ValidateCertificate validates a client certificate for mTLS
-func (s *DPoPService) ValidateCertificate(cert *x509.Certificate) error {
-	if cert == nil {
-		return fmt.Errorf("no certificate provided")
-	}
-
-	// Check expiration
-	now := time.Now()
-	if now.Before(cert.NotBefore) {
-		return fmt.Errorf("certificate not yet valid")
-	}
-	if now.After(cert.NotAfter) {
-		return fmt.Errorf("certificate has expired")
-	}
-
-	return nil
-}
-
-// GetCertificateThumbprint returns the SHA-256 thumbprint of a certificate
-func (s *DPoPService) GetCertificateThumbprint(cert *x509.Certificate) string {
-	hash := sha256.Sum256(cert.Raw)
-	return base64.RawURLEncoding.EncodeToString(hash[:])
-}
-
-// BindTokenToCertificate binds an access token to a certificate thumbprint
-func (s *DPoPService) BindTokenToCertificate(token string, certThumbprint string) string {
-	// This would be stored with the token in production
-	return certThumbprint
 }
