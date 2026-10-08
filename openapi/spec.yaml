@@ -414,7 +414,10 @@ paths:
         to authenticate the user and obtain consent. On success, redirects back to the client
         with an authorization code.
 
-        For testing, pass `user_id` to auto-approve without user interaction.
+        When `redirect_uri` is `urn:ietf:wg:oauth:2.0:oob` or `urn:ietf:wg:oauth:2.0:oob:auto`,
+        and that value is registered for the client, the response is an HTML page containing
+        the authorization code. That request requires `response_type=code` and PKCE S256.
+        The token request repeats the same redirect URI.
 
         Supports PKCE via `code_challenge` and `code_challenge_method` parameters.
       operationId: authorize

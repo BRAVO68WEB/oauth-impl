@@ -30,7 +30,9 @@ Initiates the authorization code flow.
 - `code_challenge_method` (optional) - `S256` or `plain`
 - `nonce` (optional) - For OpenID Connect
 
-**Response:** Redirects to `redirect_uri` with authorization code
+**Response:** Redirects to `redirect_uri` with an authorization code.
+
+A client may register `urn:ietf:wg:oauth:2.0:oob` or `urn:ietf:wg:oauth:2.0:oob:auto` instead of an HTTP callback. The request must use `response_type=code` and PKCE `S256`. After sign-in the server returns an HTML page with the code. The token request sends that same `redirect_uri` back with the pasted code and `code_verifier`. `oauth-cli flow paste` prints the URL and reads the code.
 
 ---
 

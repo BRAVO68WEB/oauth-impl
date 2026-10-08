@@ -161,7 +161,13 @@ just build-cli
 # Flow testing
 ./bin/oauth-cli flow client-credentials --client-id <id> --client-secret <secret>
 ./bin/oauth-cli flow device --client-id <id> --client-secret <secret>
+./bin/oauth-cli flow paste --client-id <id>
 ```
+
+`flow paste` prints an authorize URL and waits for a code copied from the
+browser. The client must allow `authorization_code` and register
+`urn:ietf:wg:oauth:2.0:oob`. Pass `--client-secret` for a confidential
+client. Leave it off when `token_endpoint_auth_method` is `none`.
 
 ### Mobile Polling CLI (`oauth-mobile`)
 

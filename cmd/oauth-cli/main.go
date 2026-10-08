@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,11 +14,15 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	qrcode "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
+
+	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
 
 var (
@@ -213,7 +218,84 @@ func flowCmd() *cobra.Command {
 	deviceCmd.Flags().String("client-secret", "", "Client Secret")
 	deviceCmd.Flags().String("scope", "openid", "Scopes")
 
-	cmd.AddCommand(clientCredsCmd, deviceCmd)
+	pasteCmd := &cobra.Command{
+		Use:   "paste",
+		Short: "Print an authorize URL and exchange a pasted code",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientID, _ := cmd.Flags().GetString("client-id")
+			clientSecret, _ := cmd.Flags().GetString("client-secret")
+			scope, _ := cmd.Flags().GetString("scope")
+			redirectURI, _ := cmd.Flags().GetString("redirect-uri")
+			if clientID == "" {
+				return fmt.Errorf("client-id is required")
+			}
+			verifier, err := crypto.GenerateCodeVerifier()
+			if err != nil {
+				return err
+			}
+			state, err := crypto.GenerateToken()
+			if err != nil {
+				return err
+			}
+			query := url.Values{}
+			query.Set("client_id", clientID)
+			query.Set("response_type", "code")
+			query.Set("redirect_uri", redirectURI)
+			query.Set("scope", scope)
+			query.Set("state", state)
+			query.Set("code_challenge", crypto.GenerateCodeChallenge(verifier))
+			query.Set("code_challenge_method", "S256")
+			fmt.Printf("Open this URL and sign in:\n%s\n\n", serverURL+"/oauth/authorize?"+query.Encode())
+			fmt.Fprint(os.Stderr, "Paste the authorization code: ")
+			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+			if err != nil {
+				return err
+			}
+			code := strings.TrimSpace(line)
+			form := url.Values{}
+			form.Set("grant_type", "authorization_code")
+			form.Set("code", code)
+			form.Set("redirect_uri", redirectURI)
+			form.Set("code_verifier", verifier)
+			if clientSecret == "" {
+				form.Set("client_id", clientID)
+			}
+			req, err := http.NewRequest(http.MethodPost, serverURL+"/oauth/token", strings.NewReader(form.Encode()))
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if clientSecret != "" {
+				req.SetBasicAuth(clientID, clientSecret)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var result map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+			if errMsg, ok := result["error"]; ok {
+				return fmt.Errorf("%s: %v", errMsg, result["error_description"])
+			}
+			fmt.Printf("Access Token: %s\n", result["access_token"])
+			fmt.Printf("Token Type: %s\n", result["token_type"])
+			fmt.Printf("Expires In: %v\n", result["expires_in"])
+			if result["refresh_token"] != nil {
+				fmt.Printf("Refresh Token: %s\n", result["refresh_token"])
+			}
+			fmt.Printf("Scope: %s\n", result["scope"])
+			return nil
+		},
+	}
+	pasteCmd.Flags().String("client-id", "", "Client ID")
+	pasteCmd.Flags().String("client-secret", "", "Client secret, omit for a public client")
+	pasteCmd.Flags().String("scope", "openid", "Scopes")
+	pasteCmd.Flags().String("redirect-uri", "urn:ietf:wg:oauth:2.0:oob", "Out-of-band redirect URI registered on the client")
+
+	cmd.AddCommand(clientCredsCmd, deviceCmd, pasteCmd)
 	return cmd
 }
 

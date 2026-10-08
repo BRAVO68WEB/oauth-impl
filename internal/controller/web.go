@@ -765,6 +765,10 @@ func (c *WebController) HandleConsent(w http.ResponseWriter, r *http.Request) {
 	if action == "deny" {
 		redirectURI := params["redirect_uri"]
 		state := params["state"]
+		if c.oauthHandler != nil && oauth.IsOutOfBandRedirect(redirectURI) && isValidRedirectURI(redirectURI, c.clientRedirects(params["client_id"])) {
+			c.oauthHandler.RenderOutOfBand(w, params["client_id"], "", state, "access_denied", "User denied the request")
+			return
+		}
 		if isValidRedirectURI(redirectURI, c.clientRedirects(params["client_id"])) {
 			errorURL := redirectURI
 			if strings.Contains(errorURL, "?") {
