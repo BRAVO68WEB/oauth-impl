@@ -29,6 +29,7 @@ type Config struct {
 	Telemetry    TelemetryConfig    `yaml:"telemetry"`
 	Org          OrgConfig          `yaml:"org"`
 	Push         PushConfig         `yaml:"push"`
+  AAuth        AAuthConfig        `yaml:"aauth"`
 }
 
 // PushConfig is authenticator-device registration. Enabled stays false
@@ -39,6 +40,17 @@ type PushConfig struct {
 	MinimumInteractionType string `yaml:"minimum_interaction_type"`
 	MaxDevicesPerUser      int    `yaml:"max_devices_per_user"`
 	ClientAttestation      bool   `yaml:"client_attestation_required"`
+}
+
+// AAuthConfig is the agent authorization protocol. Enabled stays false
+// unless set, so a default server does not publish AAuth metadata.
+type AAuthConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	APIssuer       string `yaml:"ap_issuer"`
+	PSIssuer       string `yaml:"ps_issuer"`
+	ASIssuer       string `yaml:"as_issuer"`
+	ResourceIssuer string `yaml:"resource_issuer"`
+	ResourceMode   string `yaml:"resource_mode"`
 }
 
 // OrgConfig turns organizations on. Both flags stay false unless set, so a
@@ -370,6 +382,9 @@ func DefaultConfig() *Config {
 			MinimumInteractionType: "boolean",
 			MaxDevicesPerUser:      5,
 			ClientAttestation:      false,
+		AAuth: AAuthConfig{
+			Enabled:      false,
+			ResourceMode: "as",
 		},
 	}
 }
@@ -471,6 +486,16 @@ func (c *Config) Normalize() {
 	if c.Push.MinimumInteractionType == "" {
 		c.Push.MinimumInteractionType = "boolean"
 	}
+  
+  fallback := strings.TrimRight(strings.TrimSpace(c.Security.Issuer), "/")
+	c.AAuth.APIssuer = aauthIssuer(c.AAuth.APIssuer, fallback)
+	c.AAuth.PSIssuer = aauthIssuer(c.AAuth.PSIssuer, fallback)
+	c.AAuth.ASIssuer = aauthIssuer(c.AAuth.ASIssuer, fallback)
+	c.AAuth.ResourceIssuer = aauthIssuer(c.AAuth.ResourceIssuer, fallback)
+	c.AAuth.ResourceMode = strings.ToLower(strings.TrimSpace(c.AAuth.ResourceMode))
+	if c.AAuth.ResourceMode == "" {
+		c.AAuth.ResourceMode = "as"
+	}
 }
 
 // ValidatePush checks the interaction floor when push devices are on.
@@ -484,6 +509,33 @@ func ValidatePush(c *Config) error {
 	default:
 		return fmt.Errorf("push.minimum_interaction_type must be boolean, number_choose, or input_manual")
 	}
+}
+
+func aauthIssuer(value, fallback string) string {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// ValidateAAuth checks the flag's issuers. A disabled block is left alone.
+func ValidateAAuth(c *Config) error {
+	if c == nil || !c.AAuth.Enabled {
+		return nil
+	}
+	switch c.AAuth.ResourceMode {
+	case "ps", "as":
+	default:
+		return fmt.Errorf("aauth.resource_mode must be ps or as")
+	}
+	for _, iss := range []string{c.AAuth.APIssuer, c.AAuth.PSIssuer, c.AAuth.ASIssuer, c.AAuth.ResourceIssuer} {
+		parsed, err := url.Parse(iss)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("aauth issuer %q is not an absolute url", iss)
+		}
+	}
+	return nil
 }
 
 var brandColorPattern = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)

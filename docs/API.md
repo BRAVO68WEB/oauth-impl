@@ -34,6 +34,8 @@ and `POST /api/account/email/verify`.
 
 Push-device registration is separate from `/oauth/device`. It is off
 unless `push.enabled` is true. See [Push devices](PUSH.md).
+AAuth discovery is separate from these routes. It is off unless
+`aauth.enabled` is true. See [AAuth](AAUTH.md).
 
 ## OAuth and OIDC
 

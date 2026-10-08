@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	root "github.com/bravo68web/oauth-impl"
+	"github.com/bravo68web/oauth-impl/internal/aauth"
 	"github.com/bravo68web/oauth-impl/internal/auth"
 	"github.com/bravo68web/oauth-impl/internal/cache"
 	"github.com/bravo68web/oauth-impl/internal/config"
@@ -71,6 +72,9 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 		return nil, err
 	}
 	if err := config.ValidatePush(cfg); err != nil {
+  	return nil, err
+	}
+	if err := config.ValidateAAuth(cfg); err != nil {
 		return nil, err
 	}
 	if err := service.ValidateTrustedProxies(cfg.Security.TrustedProxies); err != nil {
@@ -224,6 +228,16 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 	}
 
 	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, pushHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
+	var aauthHandler *aauth.Handler
+	if cfg.AAuth.Enabled {
+		aauthHandler, err = aauth.New(cfg, conn)
+		if err != nil {
+			closeRedis(redisClient)
+			return nil, fmt.Errorf("aauth: %w", err)
+		}
+	}
+
+	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, aauthHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
 	rt.SetContentSecurityPolicy(service.ContentSecurityPolicy(cfg.Security.BotProtection.Provider))
 	return &Built{
 		Mux:   rt.GetMux(),

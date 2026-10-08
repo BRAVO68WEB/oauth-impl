@@ -177,6 +177,13 @@ push:
   max_devices_per_user: 5
   client_attestation_required: false
 
+aauth:
+  enabled: false
+  ap_issuer: ""
+  ps_issuer: ""
+  as_issuer: ""
+  resource_issuer: ""
+  resource_mode: as
 
 telemetry:
   enabled: false
@@ -264,6 +271,16 @@ user is not in returns `access_denied`.
 `push.enabled` defaults to false. It registers authenticator devices
 for a later wake signal. It does not change `/oauth/device`. See
 [Push devices](PUSH.md).
+## AAuth
+
+`aauth.enabled` defaults to false. A default server does not publish
+AAuth metadata and does not mount AAuth routes. The OAuth and OpenID
+Connect endpoints stay as they are.
+
+When you set it to true, the process publishes four discovery documents
+and one Ed25519 key. An empty issuer uses `security.issuer`.
+`resource_mode` is `as` or `ps`. Token issuance is not served yet. See
+[AAuth](AAUTH.md).
 
 The browser authorize flow uses `/organization` when the user belongs to
 more than one organization, the request did not name one, and the client
