@@ -132,6 +132,7 @@ func (r *Router) setupRoutes() {
 		r2.Post("/device", r.oauthHandler.HandleDeviceAuthorization)
 		r2.Post("/par", r.oauthHandler.HandlePAR)
 		r2.Post("/bc-authorize", r.oauthHandler.HandleBCAuthorize)
+		r2.Get("/oob", r.oauthHandler.HandleOOBHelper)
 	})
 
 	r.mux.Route("/device", func(r2 chi.Router) {

@@ -101,6 +101,7 @@ type SecurityConfig struct {
 	DisableSocialRegistration bool                `yaml:"disable_social_registration"`
 	AllowInsecureFetch        bool                `yaml:"allow_insecure_fetch"`
 	FetchAllowIPs             []string            `yaml:"fetch_allow_ips"`
+	OOBHelper                 bool                `yaml:"oob_helper"`
 	Password                  PasswordPolicy      `yaml:"password"`
 	BotProtection             BotProtectionConfig `yaml:"bot_protection"`
 	MFA                       MFAConfig           `yaml:"mfa"`
@@ -278,6 +279,7 @@ func DefaultConfig() *Config {
 			ResetTokenLifetime:        30 * time.Minute,
 			DisableRegistration:       false,
 			DisableSocialRegistration: false,
+			OOBHelper:                 false,
 			Password: PasswordPolicy{
 				MinLength:     8,
 				MaxLength:     128,

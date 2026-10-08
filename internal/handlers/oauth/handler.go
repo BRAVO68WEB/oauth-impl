@@ -365,6 +365,16 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code_challenge is required", state)
 		return
 	}
+	if IsOutOfBandRedirect(redirectURI) {
+		if responseType != "code" {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "out-of-band redirect requires response_type code", state)
+			return
+		}
+		if codeChallenge == "" || codeChallengeMethod != "S256" {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "out-of-band redirect requires S256 PKCE", state)
+			return
+		}
+	}
 	if requestedActor != "" {
 		if responseType != "code" {
 			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "requested_actor requires response_type code", state)
@@ -477,6 +487,10 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 	}
 	orgID, orgSlug, orgCode, orgDesc := h.applyOrg(client, account, organization)
 	if orgCode == "access_denied" && redirectURI != "" {
+		if IsOutOfBandRedirect(redirectURI) {
+			h.RenderOutOfBand(w, client.ID, "", state, "access_denied", "User is not a member of the organization")
+			return
+		}
 		errorURL := redirectURI
 		if strings.Contains(errorURL, "?") {
 			errorURL += "&"
@@ -611,6 +625,11 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 	}
 	if state != "" {
 		params.Set("state", state)
+	}
+
+	if IsOutOfBandRedirect(redirectURI) {
+		h.RenderOutOfBand(w, client.ID, code, state, "", "")
+		return
 	}
 
 	// Handle response_mode
@@ -1072,7 +1091,7 @@ func isValidRedirectURI(uri string, allowedURIs []string) bool {
 }
 
 func isValidURI(uri string) bool {
-	return strings.HasPrefix(uri, "https://") || strings.HasPrefix(uri, "http://localhost")
+	return IsOutOfBandRedirect(uri) || strings.HasPrefix(uri, "https://") || strings.HasPrefix(uri, "http://localhost")
 }
 
 func (h *Handler) issueAccessToken(clientID, userID, scope, tokenType string) (string, error) {

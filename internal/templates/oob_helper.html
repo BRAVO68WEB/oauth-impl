@@ -1,0 +1,14 @@
+{{template "head" .}}
+{{template "brand_header" .}}
+    {{if .Error}}
+    <div class="error">{{.Error}}</div>
+    {{if .ErrorDescription}}<p class="lede">{{.ErrorDescription}}</p>{{end}}
+    {{else}}
+    <p class="lede">Paste this single value into the application that asked you to sign in. You can paste this page's address instead.</p>
+    <div class="form-group">
+        <label for="combined-code">Authorization code</label>
+        <input id="combined-code" readonly value="{{.Combined}}" onclick="this.select()">
+    </div>
+    {{end}}
+{{template "card_close" .}}
+{{template "brand_footer" .}}

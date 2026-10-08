@@ -72,7 +72,7 @@ echo "Code Verifier: $CODE_VERIFIER"
 echo "Code Challenge: $CODE_CHALLENGE"
 
 # Get authorization code
-AUTH_RESPONSE=$(curl -s -D - "$SERVER/oauth/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=https://example.com/callback&scope=openid%20profile&state=test123&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&user_id=$USER_ID" 2>/dev/null)
+AUTH_RESPONSE=$(curl -s -D - "$SERVER/oauth/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=https://example.com/callback&scope=openid%20profile&state=test123&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256" 2>/dev/null)
 AUTH_CODE=$(echo "$AUTH_RESPONSE" | grep -o 'code=[^&]*' | head -1 | cut -d'=' -f2)
 echo "Authorization Code: $AUTH_CODE"
 

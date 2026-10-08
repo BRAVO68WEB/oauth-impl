@@ -194,12 +194,6 @@ func TestActorDelegation(t *testing.T) {
 	}
 }
 
-type tokenResult struct {
-	Status int
-	Body   string
-	Access string
-}
-
 type registeredClient struct {
 	ID     string
 	Secret string

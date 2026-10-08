@@ -86,6 +86,7 @@ security:
   reset_token_lifetime: 30m
   require_pkce: false
   allow_plain_pkce: true
+  oob_helper: false
   hash_algo: internal/hashalgo/algo.go
   trusted_proxies: []
   disable_registration: false
@@ -218,6 +219,11 @@ default. Access tokens are never encrypted. ID tokens and UserInfo are
 nested JWEs only when the client sets the encryption algorithms and
 publishes an RSA encryption key. The algorithms are RSA-OAEP-256 and
 A256GCM.
+
+`security.oob_helper` defaults to false. When it is true, `GET /oauth/oob`
+shows one combined authorization code after a normal redirect to that
+URL. The flag does not change the `urn:ietf:wg:oauth:2.0:oob` page. That
+page is available when the client registers the URN.
 
 `security.hash_algo` must name `internal/hashalgo/algo.go`. That file
 exports one function, `Hash()`. Edit the body and rebuild. `init --hash

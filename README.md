@@ -15,6 +15,8 @@ and traces turn on when you set them.
 
 - Authorization code with PKCE, client credentials, device code, refresh
   tokens, token exchange, and on-behalf-of delegation to a registered agent
+- A paste-the-code page for the out-of-band redirect URNs, and an optional
+  combined-code helper at `/oauth/oob`
 - CIBA in poll mode, and pushed authorization requests
 - OpenID Connect discovery, JWKS, UserInfo, and ID tokens
 - Pairwise subjects, and nested encryption for ID tokens and UserInfo when

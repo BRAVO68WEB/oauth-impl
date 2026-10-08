@@ -414,7 +414,15 @@ paths:
         to authenticate the user and obtain consent. On success, redirects back to the client
         with an authorization code.
 
+        When `redirect_uri` is `urn:ietf:wg:oauth:2.0:oob` or `urn:ietf:wg:oauth:2.0:oob:auto`,
+        and that value is registered for the client, the response is an HTML page containing
+        the authorization code. That request requires `response_type=code` and PKCE S256.
+        The token request repeats the same redirect URI.
+
         Supports PKCE via `code_challenge` and `code_challenge_method` parameters.
+
+        When `security.oob_helper` is true, `GET /oauth/oob` displays the combined
+        code from draft-richer-oauth-oob-authcode after a normal redirect to that URI.
 
         `requested_actor` names a registered agent client. That request requires
         PKCE S256. The user consents to that agent, and the token request
@@ -525,6 +533,10 @@ paths:
           description: User ID for auto-approval (testing only, not part of standard OAuth)
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
+        "200":
+          description: |
+            HTML page containing the authorization code when `redirect_uri` is
+            `urn:ietf:wg:oauth:2.0:oob` or `urn:ietf:wg:oauth:2.0:oob:auto`.
         "302":
           description: |
             Redirect to client with authorization code. The `Location` header contains the
@@ -545,6 +557,40 @@ paths:
                 error: invalid_request
                 error_description: "client_id is required"
                 state: "abc123xyz"
+
+  /oauth/oob:
+    get:
+      tags: [OAuth 2.0]
+      summary: Combined authorization code helper
+      description: |
+        Serves the combined-code page from draft-richer-oauth-oob-authcode.
+        The route is always registered. It returns 404 unless `security.oob_helper`
+        is true. A normal authorization redirect lands here with `code` and `state`.
+        The page shows one combined value. An `error` query without `code` shows
+        the error page. Missing `code` or `state` returns 400.
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+          description: Authorization code from the redirect
+        - name: state
+          in: query
+          schema: { type: string }
+          description: State from the authorization request
+        - name: error
+          in: query
+          schema: { type: string }
+          description: OAuth error code when authorization failed
+        - name: error_description
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: HTML page with the combined code, or the error page
+        "400":
+          description: code and state are required
+        "404":
+          description: security.oob_helper is false
 
   /oauth/token:
     post:

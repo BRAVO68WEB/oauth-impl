@@ -37,6 +37,7 @@ and `POST /api/account/email/verify`.
 | Method | Path | Role |
 | --- | --- | --- |
 | GET, POST | `/oauth/authorize` | Authorization endpoint |
+| GET | `/oauth/oob` | Combined-code helper |
 | POST | `/oauth/token` | Token endpoint |
 | POST | `/oauth/revoke` | Revoke a token (RFC 7009) |
 | POST | `/oauth/introspect` | Introspect a token (RFC 7662) |
@@ -67,6 +68,21 @@ The default discovery list includes every grant above except `password`.
 `oauth-cli client master` creates a client that includes `password`.
 The password grant sends the identifier in `username`. CIBA on this
 server is poll mode.
+
+A client can register `urn:ietf:wg:oauth:2.0:oob` or
+`urn:ietf:wg:oauth:2.0:oob:auto` instead of an HTTP callback. The request
+must use `response_type=code` and PKCE `S256`. After sign-in the server
+returns an HTML page that shows the code. The token request sends that
+same `redirect_uri` with the pasted code and `code_verifier`. `oauth-cli
+flow paste` prints the URL and reads the code.
+
+When `security.oob_helper` is true, `GET /oauth/oob` is the helper page
+from draft-richer-oauth-oob-authcode. Register that URL as a normal
+redirect URI. The authorization response is still a redirect, with `code`
+and `state` on the query string. The page shows one combined value. The
+draft names an HKDF info parameter and does not assign its bytes. This
+server uses the ASCII string `draft-richer-oauth-oob-authcode`. With the
+flag off, the path returns 404.
 
 An authorization request may include `requested_actor`, the client id
 of an agent registered on this server. That request requires PKCE
