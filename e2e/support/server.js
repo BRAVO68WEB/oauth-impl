@@ -84,6 +84,13 @@ function renderConfig(port, dsn, overrides) {
   lines.push("org:");
   lines.push(`  enabled: ${yamlValue(Boolean(org.enabled))}`);
   lines.push(`  enabled_domain_based_autolookup: ${yamlValue(Boolean(org.enabled_domain_based_autolookup))}`);
+  const push = overrides.push || {};
+  lines.push("push:");
+  lines.push(`  enabled: ${yamlValue(Boolean(push.enabled))}`);
+  lines.push(`  registration_token_ttl: ${yamlValue(push.registration_token_ttl || 300)}`);
+  lines.push(`  minimum_interaction_type: ${yamlValue(push.minimum_interaction_type || "boolean")}`);
+  lines.push(`  max_devices_per_user: ${yamlValue(push.max_devices_per_user || 5)}`);
+  lines.push(`  client_attestation_required: ${yamlValue(Boolean(push.client_attestation_required))}`);
   const aauth = overrides.aauth || {};
   const base = `http://127.0.0.1:${port}`;
   let asIssuer = aauth.as_issuer || "";
