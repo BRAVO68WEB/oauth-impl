@@ -134,9 +134,10 @@ func TestOutOfBandAuthorizationCode(t *testing.T) {
 }
 
 type htmlPage struct {
-	StatusCode int
-	Location   string
-	Body       string
+	StatusCode   int
+	Location     string
+	Body         string
+	CacheControl string
 }
 
 type tokenResult struct {
@@ -184,7 +185,11 @@ func followConsent(t *testing.T, browser *http.Client, ts *httptest.Server, path
 	form.Set("csrf_token", csrfFromBody(t, string(consentBody)))
 	form.Set("action", action)
 	form.Set("client_id", urlValue(path, "client_id"))
-	form.Set("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
+	redirectURI := urlValue(path, "redirect_uri")
+	if redirectURI == "" {
+		redirectURI = "urn:ietf:wg:oauth:2.0:oob"
+	}
+	form.Set("redirect_uri", redirectURI)
 	form.Set("response_type", "code")
 	form.Set("scope", "openid")
 	form.Set("state", "xyz")
@@ -200,7 +205,7 @@ func followConsent(t *testing.T, browser *http.Client, ts *httptest.Server, path
 	postedBody, _ := io.ReadAll(posted.Body)
 	_ = posted.Body.Close()
 	if action == "deny" {
-		return htmlPage{StatusCode: posted.StatusCode, Location: posted.Header.Get("Location"), Body: string(postedBody)}
+		return htmlPage{StatusCode: posted.StatusCode, Location: posted.Header.Get("Location"), Body: string(postedBody), CacheControl: posted.Header.Get("Cache-Control")}
 	}
 	if posted.StatusCode != http.StatusFound {
 		t.Fatalf("consent %d %s", posted.StatusCode, postedBody)
@@ -215,7 +220,7 @@ func followConsent(t *testing.T, browser *http.Client, ts *httptest.Server, path
 	}
 	finalBody, _ := io.ReadAll(final.Body)
 	_ = final.Body.Close()
-	return htmlPage{StatusCode: final.StatusCode, Location: final.Header.Get("Location"), Body: string(finalBody)}
+	return htmlPage{StatusCode: final.StatusCode, Location: final.Header.Get("Location"), Body: string(finalBody), CacheControl: final.Header.Get("Cache-Control")}
 }
 
 func urlValue(raw, key string) string {

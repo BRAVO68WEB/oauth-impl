@@ -162,6 +162,10 @@ func TestOOBHelperCombinedCode(t *testing.T) {
 		t.Fatalf("helper %d %s", page.StatusCode, pageBody)
 	}
 	combined := inputValue(t, string(pageBody), "combined-code")
+	asCode := tokenFromCode(t, ts.URL, client.ID, combined, verifier, redirectURI)
+	if asCode.Status == http.StatusOK {
+		t.Fatalf("combined value was accepted as an authorization code: %s", asCode.Body)
+	}
 	recovered, err := oobcode.Recover(combined, "helper-state")
 	if err != nil {
 		t.Fatal(err)
