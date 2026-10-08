@@ -22,6 +22,7 @@ type Config struct {
 	OIDC         OIDCConfig         `yaml:"oidc"`
 	Management   ManagementConfig   `yaml:"management"`
 	SMTP         SMTPConfig         `yaml:"smtp"`
+	Email        EmailConfig        `yaml:"email"`
 	Branding     BrandingConfig     `yaml:"branding"`
 	Social       SocialConfig       `yaml:"social"`
 	Registration RegistrationConfig `yaml:"registration"`
@@ -95,6 +96,7 @@ type SecurityConfig struct {
 	SessionLifetime           time.Duration       `yaml:"session_lifetime"`
 	ResetTokenLifetime        time.Duration       `yaml:"reset_token_lifetime"`
 	TrustedProxies            []string            `yaml:"trusted_proxies"`
+	LoginIdentifier           string              `yaml:"login_identifier"`
 	DisableRegistration       bool                `yaml:"disable_registration"`
 	DisableSocialRegistration bool                `yaml:"disable_social_registration"`
 	AllowInsecureFetch        bool                `yaml:"allow_insecure_fetch"`
@@ -109,6 +111,12 @@ type SecurityConfig struct {
 type ManagementConfig struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+}
+
+// EmailConfig points at optional message files. An empty directory keeps
+// the built-in text.
+type EmailConfig struct {
+	TemplatesDir string `yaml:"templates_dir"`
 }
 
 type SMTPConfig struct {
@@ -423,6 +431,10 @@ func (c *Config) Normalize() {
 		v := true
 		b.ShowForgotPassword = &v
 	}
+	c.Security.LoginIdentifier = strings.ToLower(strings.TrimSpace(c.Security.LoginIdentifier))
+	if c.Security.LoginIdentifier == "" {
+		c.Security.LoginIdentifier = "username"
+	}
 	if c.Telemetry.ServiceName == "" {
 		c.Telemetry.ServiceName = "oauth-server"
 	}
@@ -628,6 +640,11 @@ func ValidatePlatform(cfg *Config) error {
 	case "", "opaque", "jwt":
 	default:
 		return fmt.Errorf("security.access_token_format must be opaque or jwt")
+	}
+	switch cfg.Security.LoginIdentifier {
+	case "", "username", "email":
+	default:
+		return fmt.Errorf("security.login_identifier must be username or email")
 	}
 	bot := cfg.Security.BotProtection.Provider
 	switch bot {

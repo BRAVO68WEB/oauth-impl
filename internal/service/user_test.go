@@ -117,6 +117,39 @@ func TestAuthenticateRehashesLegacyEncoding(t *testing.T) {
 	}
 }
 
+func TestAuthenticateByEmailIdentifier(t *testing.T) {
+	h := scriptHasher{
+		hashFn: func(password string) (string, error) { return "h:" + password, nil },
+		verifyFn: func(encoded, password string) error {
+			if encoded != "h:"+password {
+				return errors.New("mismatch")
+			}
+			return nil
+		},
+	}
+	svc, _ := newTestUserService(t, h)
+	svc.cfg.LoginIdentifier = "email"
+	if _, err := svc.CreateUser("ada", "secret-pass", "", ""); err == nil {
+		t.Fatal("expected email to be required")
+	}
+	if _, err := svc.CreateUser("ada", "secret-pass", "Ada@Example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Authenticate("ada", "secret-pass"); err == nil {
+		t.Fatal("username must not authenticate when the identifier is email")
+	}
+	got, err := svc.Authenticate("ada@example.com", "secret-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Username != "ada" {
+		t.Fatalf("user = %+v", got)
+	}
+	if _, err := svc.CreateUser("other", "secret-pass", "ada@example.com", ""); err == nil {
+		t.Fatal("expected duplicate email to be rejected")
+	}
+}
+
 func TestCreateUserHasherError(t *testing.T) {
 	h := scriptHasher{
 		hashFn:   func(string) (string, error) { return "", errors.New("boom") },

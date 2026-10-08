@@ -106,6 +106,8 @@ The `E2E` GitHub check runs `cd e2e && npm test` on every pull request. Docker m
 - **Templates**: Go `html/template` in `internal/templates/`. `branding.templates` replaces a page by file name at startup. `docs.html` is not part of the auth chrome. Editing the embedded HTML does not change a built `bin/oauth-server` until the next build; the overlay directory does, after a restart.
 - **OpenAPI**: Spec in `openapi/spec.yaml`, Scalar UI at `/docs`
 - **Traces**: `telemetry.enabled` is false unless set. When it is true, `telemetry.otlp_endpoint` is required and the server exports OTLP/HTTP spans. Span attributes are `client_id`, `grant_type`, `org_id`, and `oauth.error`. Tokens, codes, and secrets are not span attributes.
+- **Email templates**: `email.templates_dir` is empty unless set. Files are `reset.txt`, `verify.txt`, `password_changed.txt`, `new_sign_in.txt`, `login_failed.txt`, and `mfa_email.txt`. The first line is `Subject:`. A missing file keeps the built-in text. A broken file stops startup.
+- **Login identifier**: `security.login_identifier` is `username` (default) or `email`. The password-grant field stays `username`. Email mode rejects a duplicate mailbox.
 - **Organizations**: `org.enabled` is false unless set. `org.enabled_domain_based_autolookup` requires `org.enabled`. When autolookup is on and a non-interactive request omits `organization`, a member whose email domain matches an organization domain receives that `org_id`. The browser authorize flow shows `/organization` when the user belongs to more than one organization and neither the client nor the request has already chosen one. `prompt=none` returns `interaction_required` in that case. An explicit organization still requires membership.
 
 ## OAuth Flows Implemented

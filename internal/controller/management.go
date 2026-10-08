@@ -362,6 +362,10 @@ func (c *ManagementController) HandlePatchUser(w http.ResponseWriter, r *http.Re
 	wasDisabled := user.Disabled
 	applyProfile(user, req.userPatch)
 	if err := c.userSvc.UpdateProfile(user); err != nil {
+		if err.Error() == "email already exists" || err.Error() == "email is required" {
+			writeError(w, http.StatusConflict, "already_exists", err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "server_error", "Failed to update user")
 		return
 	}

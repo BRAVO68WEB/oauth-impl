@@ -44,6 +44,7 @@ function renderConfig(port, dsn, overrides) {
     `  issuer: "http://127.0.0.1:${port}"`,
     "  hash_algo: \"internal/hashalgo/algo.go\"",
     `  access_token_format: ${yamlValue(security.access_token_format || "opaque")}`,
+    `  login_identifier: ${yamlValue(security.login_identifier || "username")}`,
     `  require_pkce: ${yamlValue(Boolean(security.require_pkce))}`,
     `  disable_registration: ${yamlValue(Boolean(security.disable_registration))}`,
     `  allow_insecure_fetch: ${yamlValue(Boolean(security.allow_insecure_fetch))}`,

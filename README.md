@@ -212,6 +212,17 @@ consent, unless the client is bound to an organization or the request
 already names one. `prompt=none` returns `interaction_required`
 instead of that page.
 
+`email.templates_dir` replaces the built-in messages. Each file is
+named `reset.txt`, `verify.txt`, `password_changed.txt`,
+`new_sign_in.txt`, `login_failed.txt`, or `mfa_email.txt`. The first
+line is `Subject: ...`. A missing file keeps the built-in text. A file
+that does not parse stops startup.
+
+`security.login_identifier` is `username` or `email`. The default is
+`username`. The password grant still sends the value in `username`.
+When the setting is `email`, sign-in, forgot-password, and that grant
+look up the mailbox, and a second account cannot reuse it.
+
 ### Config Structure
 
 ```yaml
@@ -245,6 +256,7 @@ security:
   device_code_lifetime: 1800s
   ciba_request_lifetime: 120s
   request_uri_lifetime: 60s
+  login_identifier: username
   require_pkce: true
   allow_plain_pkce: false
   issuer: "http://localhost:8080"

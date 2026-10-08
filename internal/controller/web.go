@@ -322,7 +322,7 @@ func (c *WebController) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := c.userSvc.Authenticate(username, password)
 	if err != nil {
-		if existing, lookupErr := c.userSvc.GetUserByUsername(username); lookupErr == nil && c.account != nil {
+		if existing, lookupErr := c.userSvc.FindByLogin(username); lookupErr == nil && c.account != nil {
 			c.account.Record(existing, r, false, false)
 		}
 		c.renderPage(w, r, "login.html", "Login", "Sign In", params, map[string]any{
@@ -362,7 +362,7 @@ func (c *WebController) botOK(w http.ResponseWriter, r *http.Request, username s
 	}
 	if err := service.VerifyBot(r.Context(), c.cfg.Security.BotProtection, r.FormValue("bot_token"), r.RemoteAddr); err != nil {
 		if username != "" && c.userSvc != nil {
-			if existing, lookupErr := c.userSvc.GetUserByUsername(username); lookupErr == nil && c.account != nil {
+			if existing, lookupErr := c.userSvc.FindByLogin(username); lookupErr == nil && c.account != nil {
 				c.account.Record(existing, r, false, false)
 			}
 		}

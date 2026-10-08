@@ -1202,7 +1202,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.userSvc.Authenticate(username, password)
 	if err != nil {
-		if existing, lookupErr := h.userRepo.GetByUsername(username); lookupErr == nil && h.logins != nil {
+		if existing, lookupErr := h.userSvc.FindByLogin(username); lookupErr == nil && h.logins != nil {
 			h.logins.Record(existing, r, false, false)
 		}
 		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Invalid username or password")

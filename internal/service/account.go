@@ -28,6 +28,7 @@ type AccountService struct {
 	sessions             *SessionService
 	tokens               *repository.TokenRepository
 	mail                 mailer.Mailer
+	templates            *mailer.Templates
 	logout               *LogoutService
 	hooks                *WebhookDispatcher
 	trusted              []string
@@ -76,6 +77,12 @@ func NewAccountService(
 		registrationDisabled: cfg.Security.DisableRegistration,
 		lim:                  newRateLimiter(),
 		lastMail:             map[string]time.Time{},
+	}
+}
+
+func (a *AccountService) SetTemplates(t *mailer.Templates) {
+	if a != nil {
+		a.templates = t
 	}
 }
 
@@ -160,8 +167,10 @@ func (a *AccountService) Forgot(identifier, ip string) error {
 		return err
 	}
 	a.emit(EventForgotPassword, data)
-	body := fmt.Sprintf("Reset your password:\n\n%s/reset?token=%s\n\nThis link expires in %s.\n", a.issuer, token, a.resetTTL)
-	return a.mail.Send(user.Email, "Password reset", body)
+	return a.sendMail(user, "reset", mailer.Data{
+		Link: a.issuer + "/reset?token=" + token,
+		TTL:  a.resetTTL.String(),
+	})
 }
 
 func (a *AccountService) Reset(token, password, ip string) error {
@@ -354,16 +363,14 @@ func (a *AccountService) afterCredentialChange(userID, keepAccess, keepSID strin
 }
 
 func (a *AccountService) findUser(identifier string) *models.User {
-	if identifier == "" {
+	if a == nil || a.users == nil || identifier == "" {
 		return nil
 	}
-	if user, err := a.userRepo.GetByUsername(identifier); err == nil {
-		return user
+	user, err := a.users.FindByLogin(identifier)
+	if err != nil {
+		return nil
 	}
-	if user, err := a.userRepo.GetByEmail(identifier); err == nil {
-		return user
-	}
-	return nil
+	return user
 }
 
 func (a *AccountService) sendVerify(user *models.User) error {
@@ -375,8 +382,7 @@ func (a *AccountService) sendVerify(user *models.User) error {
 		log.Printf("verify token: %v", err)
 		return err
 	}
-	body := fmt.Sprintf("Confirm your email:\n\n%s/verify-email?token=%s\n", a.issuer, token)
-	if err := a.mail.Send(user.Email, "Confirm your email", body); err != nil {
+	if err := a.sendMail(user, "verify", mailer.Data{Link: a.issuer + "/verify-email?token=" + token}); err != nil {
 		log.Printf("verify mail: %v", err)
 		return err
 	}
@@ -387,8 +393,7 @@ func (a *AccountService) sendPasswordChanged(user *models.User) {
 	if !a.mail.Enabled() || user == nil || user.Email == "" {
 		return
 	}
-	body := fmt.Sprintf("The password for %s was changed.\n\nIf you did not do this, reset it from %s/forgot\n", user.Username, a.issuer)
-	if err := a.mail.Send(user.Email, "Password changed", body); err != nil {
+	if err := a.sendMail(user, "password_changed", mailer.Data{}); err != nil {
 		log.Printf("password-changed mail: %v", err)
 	}
 }
@@ -400,9 +405,9 @@ func (a *AccountService) maybeLoginMail(user *models.User, ev *models.LoginEvent
 	if !a.markMail("login:"+user.ID, 10*time.Minute) {
 		return
 	}
-	body := fmt.Sprintf("New sign-in for %s\n\nTime: %s\nIP: %s\nAgent: %s\n",
-		user.Username, ev.CreatedAt.Format(time.RFC3339), ev.IP, ev.UserAgent)
-	if err := a.mail.Send(user.Email, "New sign-in", body); err != nil {
+	if err := a.sendMail(user, "new_sign_in", mailer.Data{
+		Time: ev.CreatedAt.Format(time.RFC3339), IP: ev.IP, Agent: ev.UserAgent,
+	}); err != nil {
 		log.Printf("login mail: %v", err)
 	}
 }
@@ -424,10 +429,23 @@ func (a *AccountService) maybeFailMail(user *models.User, ev *models.LoginEvent)
 	if !a.markMail("fail:"+user.ID, time.Hour) {
 		return
 	}
-	body := fmt.Sprintf("%d failed sign-in attempts for %s in the last 15 minutes.\n\nLatest IP: %s\n", n, user.Username, ev.IP)
-	if err := a.mail.Send(user.Email, "Failed sign-in attempts", body); err != nil {
+	if err := a.sendMail(user, "login_failed", mailer.Data{Count: fmt.Sprintf("%d", n), IP: ev.IP}); err != nil {
 		log.Printf("failed-login mail: %v", err)
 	}
+}
+
+func (a *AccountService) sendMail(user *models.User, name string, data mailer.Data) error {
+	if a == nil || a.mail == nil || user == nil || user.Email == "" {
+		return nil
+	}
+	data.Issuer = a.issuer
+	data.Username = user.Username
+	data.Email = user.Email
+	subject, body, err := mailer.Render(a.templates, name, data)
+	if err != nil {
+		return err
+	}
+	return a.mail.Send(user.Email, subject, body)
 }
 
 func (a *AccountService) markMail(key string, window time.Duration) bool {

@@ -118,6 +118,11 @@ func New(cfg *config.Config, db *database.DB, q queue.Queue) (*Server, error) {
 	sessionSvc := service.NewSessionService(repository.NewSessionRepository(conn), cfg.Security.SessionLifetime)
 	logoutSvc := service.NewLogoutService(sessionSvc, clientRepo, oidcHandler)
 	accountSvc := service.NewAccountService(userSvc, userRepo, repository.NewEmailTokenRepository(conn), repository.NewLoginEventRepository(conn), sessionSvc, tokenRepo, mail, logoutSvc, cfg)
+	mailTemplates, err := mailer.Load(cfg.Email.TemplatesDir)
+	if err != nil {
+		return nil, err
+	}
+	accountSvc.SetTemplates(mailTemplates)
 	hooks := service.NewWebhookDispatcher(repository.NewWebhookRepository(conn))
 	hooks.SetFetchConfig(cfg)
 	logoutSvc.SetFetchConfig(cfg)
