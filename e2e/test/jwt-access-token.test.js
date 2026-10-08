@@ -43,10 +43,12 @@ describe("JWT access tokens", function () {
 
     const verified = await jwtVerify(issued.body.access_token, jwks, {
       issuer: server.base,
-      audience: client.id,
+      audience: server.base,
+      typ: "at+jwt",
     });
     assert.equal(verified.payload.sub, user.id);
     assert.equal(verified.payload.client_id, client.id);
+    assert.equal(verified.payload.azp, client.id);
     assert.ok(verified.protectedHeader.kid);
 
     const info = await userInfo(server.base, issued.body.access_token);
@@ -65,9 +67,11 @@ describe("JWT access tokens", function () {
     assert.equal(refreshed.body.refresh_token.includes("."), false);
     const next = await jwtVerify(refreshed.body.access_token, jwks, {
       issuer: server.base,
-      audience: client.id,
+      audience: server.base,
+      typ: "at+jwt",
     });
     assert.equal(next.payload.sub, user.id);
+    assert.equal(next.payload.azp, client.id);
 
     const revoked = await revoke(server.base, client, refreshed.body.access_token);
     assert.equal(revoked.status, 200);
