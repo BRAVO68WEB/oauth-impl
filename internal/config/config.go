@@ -29,7 +29,7 @@ type Config struct {
 	Telemetry    TelemetryConfig    `yaml:"telemetry"`
 	Org          OrgConfig          `yaml:"org"`
 	Push         PushConfig         `yaml:"push"`
-  AAuth        AAuthConfig        `yaml:"aauth"`
+	AAuth        AAuthConfig        `yaml:"aauth"`
 }
 
 // PushConfig is authenticator-device registration. Enabled stays false
@@ -382,6 +382,7 @@ func DefaultConfig() *Config {
 			MinimumInteractionType: "boolean",
 			MaxDevicesPerUser:      5,
 			ClientAttestation:      false,
+		},
 		AAuth: AAuthConfig{
 			Enabled:      false,
 			ResourceMode: "as",
@@ -486,8 +487,8 @@ func (c *Config) Normalize() {
 	if c.Push.MinimumInteractionType == "" {
 		c.Push.MinimumInteractionType = "boolean"
 	}
-  
-  fallback := strings.TrimRight(strings.TrimSpace(c.Security.Issuer), "/")
+
+	fallback := strings.TrimRight(strings.TrimSpace(c.Security.Issuer), "/")
 	c.AAuth.APIssuer = aauthIssuer(c.AAuth.APIssuer, fallback)
 	c.AAuth.PSIssuer = aauthIssuer(c.AAuth.PSIssuer, fallback)
 	c.AAuth.ASIssuer = aauthIssuer(c.AAuth.ASIssuer, fallback)
