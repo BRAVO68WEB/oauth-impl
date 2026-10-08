@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -433,7 +432,11 @@ func publicFromMap(raw map[string]any) (*ecdsa.PublicKey, error) {
 	if len(x) != 32 || len(y) != 32 {
 		return nil, fmt.Errorf("bad coordinates")
 	}
-	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil
+	point := make([]byte, 65)
+	point[0] = 4
+	copy(point[1:33], x)
+	copy(point[33:], y)
+	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
 func requestURI(r *http.Request) string {
