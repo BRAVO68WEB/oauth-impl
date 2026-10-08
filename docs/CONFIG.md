@@ -170,6 +170,14 @@ org:
   enabled: false
   enabled_domain_based_autolookup: false
 
+push:
+  enabled: false
+  registration_token_ttl: 300
+  minimum_interaction_type: boolean
+  max_devices_per_user: 5
+  client_attestation_required: false
+
+
 telemetry:
   enabled: false
   service_name: oauth-server
@@ -252,6 +260,10 @@ default server never selects an organization.
 an organization from the user's email domain only when they are already
 a member. It does not create a membership. Naming an organization the
 user is not in returns `access_denied`.
+
+`push.enabled` defaults to false. It registers authenticator devices
+for a later wake signal. It does not change `/oauth/device`. See
+[Push devices](PUSH.md).
 
 The browser authorize flow uses `/organization` when the user belongs to
 more than one organization, the request did not name one, and the client

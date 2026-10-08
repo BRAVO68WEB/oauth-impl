@@ -32,6 +32,9 @@ and `POST /api/account/email/verify`.
 
 `GET /health` needs no token.
 
+Push-device registration is separate from `/oauth/device`. It is off
+unless `push.enabled` is true. See [Push devices](PUSH.md).
+
 ## OAuth and OIDC
 
 | Method | Path | Role |

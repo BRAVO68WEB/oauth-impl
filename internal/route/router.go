@@ -17,6 +17,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
+	"github.com/bravo68web/oauth-impl/internal/push"
 	"github.com/bravo68web/oauth-impl/internal/service"
 	"github.com/bravo68web/oauth-impl/internal/telemetry"
 )
@@ -27,6 +28,7 @@ type Router struct {
 	webCtrl        *controller.WebController
 	oauthHandler   *oauth.Handler
 	oidcHandler    *oidc.Handler
+	pushHandler    *push.Handler
 	accountCtrl    *controller.AccountController
 	authn          *auth.Middleware
 	openapiJSON    []byte
@@ -45,6 +47,7 @@ func NewRouter(
 	webCtrl *controller.WebController,
 	oauthHandler *oauth.Handler,
 	oidcHandler *oidc.Handler,
+	pushHandler *push.Handler,
 	accountCtrl *controller.AccountController,
 	authn *auth.Middleware,
 	openapiSpec []byte,
@@ -62,6 +65,7 @@ func NewRouter(
 		webCtrl:        webCtrl,
 		oauthHandler:   oauthHandler,
 		oidcHandler:    oidcHandler,
+		pushHandler:    pushHandler,
 		accountCtrl:    accountCtrl,
 		authn:          authn,
 		openapiJSON:    openapiJSON,
@@ -151,7 +155,17 @@ func (r *Router) setupRoutes() {
 	r.mux.Route("/.well-known", func(r2 chi.Router) {
 		r2.Get("/openid-configuration", r.oidcHandler.HandleDiscovery)
 		r2.Get("/oauth-authorization-server", r.oidcHandler.HandleASMetadata)
+		if r.pushHandler != nil {
+			r2.Get("/oauth-push-notification", r.pushHandler.Discovery)
+		}
 	})
+	if r.pushHandler != nil {
+		r.mux.Get("/push/enroll", r.webCtrl.HandlePushEnroll)
+		r.mux.Post("/push/register", r.pushHandler.Register)
+		r.mux.Post("/push/revoke", r.pushHandler.Revoke)
+		r.mux.Post("/push/rotate-key", r.pushHandler.Rotate)
+		r.mux.Get("/push/devices", r.pushHandler.Devices)
+	}
 
 	r.mux.Route("/oidc", func(r2 chi.Router) {
 		r2.Get("/userinfo", r.oidcHandler.HandleUserInfo)

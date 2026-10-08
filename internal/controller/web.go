@@ -17,6 +17,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/push"
 	"github.com/bravo68web/oauth-impl/internal/service"
 )
 
@@ -30,6 +31,13 @@ type WebController struct {
 	theme        branding.Theme
 	social       *service.SocialService
 	audit        *service.AuditLog
+	push         *push.Handler
+}
+
+func (c *WebController) SetPush(h *push.Handler) {
+	if c != nil {
+		c.push = h
+	}
 }
 
 func (c *WebController) SetAudit(a *service.AuditLog) {
@@ -212,7 +220,7 @@ func isLocalURL(raw string) bool {
 	if err != nil || parsed.IsAbs() || parsed.Host != "" {
 		return false
 	}
-	return parsed.Path == "/device" || parsed.Path == "/oauth/authorize"
+	return parsed.Path == "/device" || parsed.Path == "/oauth/authorize" || parsed.Path == "/push/enroll"
 }
 
 func (c *WebController) buildAuthorizeURL(params map[string]string) string {
@@ -301,6 +309,31 @@ func oauthTemplateData(params map[string]string, extra map[string]interface{}) m
 // ──────────────────────────────────────────────
 // Login Flow
 // ──────────────────────────────────────────────
+
+func (c *WebController) HandlePushEnroll(w http.ResponseWriter, r *http.Request) {
+	if c == nil || c.push == nil {
+		http.NotFound(w, r)
+		return
+	}
+	session := c.getSession(r)
+	if session == nil || !session.Authenticated {
+		next := "/push/enroll"
+		if r.URL.RawQuery != "" {
+			next += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusFound)
+		return
+	}
+	item, ok := c.push.Enroll(w, r)
+	if !ok {
+		return
+	}
+	c.renderPage(w, r, "push_enroll.html", "Register a device", "Register a device", map[string]string{}, map[string]any{
+		"QRCodeBase64":      item.QR,
+		"EnrollURL":         item.URL,
+		"RegistrationToken": item.Token,
+	})
+}
 
 func (c *WebController) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 	params := extractOAuthParams(r)
