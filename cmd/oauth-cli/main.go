@@ -22,6 +22,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 
+	"github.com/bravo68web/oauth-impl/internal/oobcode"
 	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
 
@@ -226,8 +227,14 @@ func flowCmd() *cobra.Command {
 			clientSecret, _ := cmd.Flags().GetString("client-secret")
 			scope, _ := cmd.Flags().GetString("scope")
 			redirectURI, _ := cmd.Flags().GetString("redirect-uri")
+			combined, _ := cmd.Flags().GetBool("combined")
 			if clientID == "" {
 				return fmt.Errorf("client-id is required")
+			}
+			if !combined {
+				if parsed, err := url.Parse(redirectURI); err == nil && parsed.Path == "/oauth/oob" {
+					combined = true
+				}
 			}
 			verifier, err := crypto.GenerateCodeVerifier()
 			if err != nil {
@@ -251,7 +258,10 @@ func flowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			code := strings.TrimSpace(line)
+			code, err := oobcode.FromPaste(line, state, combined)
+			if err != nil {
+				return err
+			}
 			form := url.Values{}
 			form.Set("grant_type", "authorization_code")
 			form.Set("code", code)
@@ -293,7 +303,8 @@ func flowCmd() *cobra.Command {
 	pasteCmd.Flags().String("client-id", "", "Client ID")
 	pasteCmd.Flags().String("client-secret", "", "Client secret, omit for a public client")
 	pasteCmd.Flags().String("scope", "openid", "Scopes")
-	pasteCmd.Flags().String("redirect-uri", "urn:ietf:wg:oauth:2.0:oob", "Out-of-band redirect URI registered on the client")
+	pasteCmd.Flags().String("redirect-uri", "urn:ietf:wg:oauth:2.0:oob", "Redirect URI registered on the client")
+	pasteCmd.Flags().Bool("combined", false, "Unwrap a draft-richer-oauth-oob-authcode combined code")
 
 	cmd.AddCommand(clientCredsCmd, deviceCmd, pasteCmd)
 	return cmd

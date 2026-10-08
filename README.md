@@ -169,6 +169,12 @@ browser. The client must allow `authorization_code` and register
 `urn:ietf:wg:oauth:2.0:oob`. Pass `--client-secret` for a confidential
 client. Leave it off when `token_endpoint_auth_method` is `none`.
 
+Set `security.oob_helper` to serve `/oauth/oob`, the helper page from
+draft-richer-oauth-oob-authcode. Register that URL as the client's
+redirect URI and pass it to `--redirect-uri`. The page shows one combined
+value. The command unwraps it with the `state` it stored. Pasting the
+page address works as well. The flag is off unless you set it.
+
 ### Mobile Polling CLI (`oauth-mobile`)
 
 ```bash
@@ -264,6 +270,7 @@ security:
   request_uri_lifetime: 60s
   login_identifier: username
   require_pkce: true
+  oob_helper: false
   allow_plain_pkce: false
   issuer: "http://localhost:8080"
   hash_algo: "internal/hashalgo/algo.go"

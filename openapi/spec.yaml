@@ -420,6 +420,9 @@ paths:
         The token request repeats the same redirect URI.
 
         Supports PKCE via `code_challenge` and `code_challenge_method` parameters.
+
+        When `security.oob_helper` is true, `GET /oauth/oob` displays the combined
+        code from draft-richer-oauth-oob-authcode after a normal redirect to that URI.
       operationId: authorize
       parameters:
         - name: client_id
