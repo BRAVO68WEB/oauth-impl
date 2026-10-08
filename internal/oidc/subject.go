@@ -50,10 +50,10 @@ func (h *Handler) SubjectFor(clientID, userID string) (string, error) {
 	if userID == "" {
 		return clientID, nil
 	}
-	if h == nil || h.db == nil {
+	if h == nil || h.clients == nil {
 		return userID, nil
 	}
-	client, err := h.db.GetClient(clientID)
+	client, err := h.clients.GetByID(clientID)
 	if err != nil || client == nil {
 		return userID, nil
 	}

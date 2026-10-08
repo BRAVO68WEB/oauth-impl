@@ -19,12 +19,17 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/repository"
 )
 
 type Handler struct {
 	db          *database.DB
 	cfg         *config.Config
 	keySet      *KeySet
+	clients     *repository.ClientRepository
+	users       *repository.UserRepository
+	tokens      *repository.TokenRepository
+	orgs        *repository.OrgRepository
 	checkDPoP   func(header, method, uri, accessToken string) error
 	fetchSector func(ctx context.Context, rawURL string) ([]byte, error)
 	sectorCache cache.Cache
@@ -68,11 +73,18 @@ func NewHandler(db *database.DB, cfg *config.Config) (*Handler, error) {
 		return nil, fmt.Errorf("failed to generate key set: %w", err)
 	}
 
-	return &Handler{
+	h := &Handler{
 		db:     db,
 		cfg:    cfg,
 		keySet: keySet,
-	}, nil
+	}
+	if db != nil {
+		h.clients = repository.NewClientRepository(db)
+		h.users = repository.NewUserRepository(db)
+		h.tokens = repository.NewTokenRepository(db)
+		h.orgs = repository.NewOrgRepository(db)
+	}
+	return h, nil
 }
 
 func generateKid() string {
@@ -193,8 +205,8 @@ func (h *Handler) identityClaims(clientID, userID, nonce string, scopes []string
 	}
 	now := time.Now()
 	var user *models.User
-	if h.db != nil {
-		user, _ = h.db.GetUser(userID)
+	if h.users != nil {
+		user, _ = h.users.GetByID(userID)
 	}
 	mappings := []config.ClaimMapping{}
 	if h.cfg != nil {
@@ -283,7 +295,11 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	at, err := h.db.GetAccessToken(tokenString)
+	if h.tokens == nil {
+		writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "Token not found")
+		return
+	}
+	at, err := h.tokens.GetAccessToken(tokenString)
 	if err != nil {
 		writeOIDCError(w, http.StatusUnauthorized, "invalid_token", "Token not found")
 		return
@@ -298,7 +314,11 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.db.GetUser(at.UserID)
+	if h.users == nil {
+		writeOIDCError(w, http.StatusNotFound, "not_found", "User not found")
+		return
+	}
+	user, err := h.users.GetByID(at.UserID)
 	if err != nil {
 		writeOIDCError(w, http.StatusNotFound, "not_found", "User not found")
 		return
@@ -314,9 +334,10 @@ func (h *Handler) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	if at.OrgID != "" {
 		response["org_id"] = at.OrgID
-		var slug string
-		if err := h.db.QueryRow(`SELECT slug FROM organizations WHERE id = ?`, at.OrgID).Scan(&slug); err == nil && slug != "" {
-			response["org_slug"] = slug
+		if h.orgs != nil {
+			if org, err := h.orgs.Get(at.OrgID); err == nil && org != nil && org.Slug != "" {
+				response["org_slug"] = org.Slug
+			}
 		}
 	}
 	mappings := []config.ClaimMapping{}
@@ -372,8 +393,8 @@ func splitAuth(header string) (string, string) {
 
 func (h *Handler) userInfoDPoP(w http.ResponseWriter, r *http.Request, at *models.AccessToken, scheme string) bool {
 	bound := at.TokenType == "DPoP" || at.DPoPJKT != ""
-	if h.db != nil {
-		if client, err := h.db.GetClient(at.ClientID); err == nil && client.DPoPBoundAccessTokens {
+	if h.clients != nil {
+		if client, err := h.clients.GetByID(at.ClientID); err == nil && client.DPoPBoundAccessTokens {
 			bound = true
 		}
 	}

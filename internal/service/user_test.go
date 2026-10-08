@@ -150,6 +150,28 @@ func TestAuthenticateByEmailIdentifier(t *testing.T) {
 	}
 }
 
+func TestCreateUserRejectsDuplicateMailbox(t *testing.T) {
+	h := scriptHasher{
+		hashFn:   func(password string) (string, error) { return "h:" + password, nil },
+		verifyFn: func(string, string) error { return nil },
+	}
+	svc, repo := newTestUserService(t, h)
+	if _, err := svc.CreateUser("ada", "secret-pass", "Ada@Example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.CreateUser("other", "secret-pass", "ada@example.com", "")
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("error = %v", err)
+	}
+	stored, err := repo.GetByUsername("ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Email != "ada@example.com" {
+		t.Fatalf("email = %q", stored.Email)
+	}
+}
+
 func TestCreateUserHasherError(t *testing.T) {
 	h := scriptHasher{
 		hashFn:   func(string) (string, error) { return "", errors.New("boom") },

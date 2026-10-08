@@ -8,13 +8,16 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/config"
 	"github.com/bravo68web/oauth-impl/internal/database"
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/pkg/crypto"
 	pkgerrors "github.com/bravo68web/oauth-impl/pkg/errors"
 )
 
 type FlowContext struct {
-	DB  *database.DB
-	Cfg *config.Config
+	Clients *repository.ClientRepository
+	Tokens  *repository.TokenRepository
+	Codes   *repository.AuthCodeRepository
+	Cfg     *config.Config
 }
 
 type TokenResult struct {
@@ -27,8 +30,10 @@ type TokenResult struct {
 
 func NewFlowContext(db *database.DB, cfg *config.Config) *FlowContext {
 	return &FlowContext{
-		DB:  db,
-		Cfg: cfg,
+		Clients: repository.NewClientRepository(db),
+		Tokens:  repository.NewTokenRepository(db),
+		Codes:   repository.NewAuthCodeRepository(db),
+		Cfg:     cfg,
 	}
 }
 
@@ -37,7 +42,7 @@ func (fc *FlowContext) ValidateClient(clientID, clientSecret string) (*models.Cl
 		return nil, pkgerrors.InvalidClient("client_id is required")
 	}
 
-	client, err := fc.DB.GetClient(clientID)
+	client, err := fc.Clients.GetByID(clientID)
 	if err != nil {
 		return nil, pkgerrors.InvalidClient("Client not found")
 	}
@@ -89,11 +94,11 @@ func (fc *FlowContext) GenerateTokens(clientID, userID string, scopes []string) 
 		ExpiresAt:   time.Now().Add(fc.Cfg.Security.RefreshTokenLifetime),
 	}
 
-	if err := fc.DB.SaveAccessToken(accessTok); err != nil {
+	if err := fc.Tokens.SaveAccessToken(accessTok); err != nil {
 		return nil, pkgerrors.ServerError("Failed to save access token")
 	}
 
-	if err := fc.DB.SaveRefreshToken(refreshTok); err != nil {
+	if err := fc.Tokens.SaveRefreshToken(refreshTok); err != nil {
 		return nil, pkgerrors.ServerError("Failed to save refresh token")
 	}
 
@@ -111,7 +116,7 @@ func (fc *FlowContext) ValidateAuthorizationCode(code, clientID, redirectURI, co
 		return nil, pkgerrors.InvalidRequest("code is required")
 	}
 
-	authCode, err := fc.DB.GetAuthorizationCode(code)
+	authCode, err := fc.Codes.Get(code)
 	if err != nil {
 		return nil, pkgerrors.InvalidGrant("Invalid authorization code")
 	}

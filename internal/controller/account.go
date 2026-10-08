@@ -165,6 +165,9 @@ func (c *AccountController) HandlePatchMe(w http.ResponseWriter, r *http.Request
 		user.EmailVerified = false
 	}
 	if err := c.users.UpdateProfile(user); err != nil {
+		if writeProfileError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "server_error", "Failed to update profile")
 		return
 	}

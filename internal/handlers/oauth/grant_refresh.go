@@ -1,0 +1,114 @@
+package oauth
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/pkg/crypto"
+)
+
+func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	refreshTokenStr := r.Form.Get("refresh_token")
+	if refreshTokenStr == "" {
+		writeTokenError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		return
+	}
+
+	refreshToken, err := h.tokenRepo.GetRefreshToken(refreshTokenStr)
+	if err != nil {
+		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Invalid refresh token")
+		return
+	}
+
+	// Refresh token reuse detection - revoke entire grant family
+	if refreshToken.Revoked {
+		if refreshToken.FamilyID != "" {
+			_ = h.tokenRepo.RevokeFamily(refreshToken.FamilyID)
+		} else {
+			_ = h.tokenRepo.RevokeAllForClient(refreshToken.ClientID, refreshToken.UserID)
+		}
+		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Refresh token revoked")
+		return
+	}
+
+	if !refreshToken.ExpiresAt.IsZero() && time.Now().After(refreshToken.ExpiresAt) {
+		writeTokenError(w, http.StatusBadRequest, "invalid_grant", "Refresh token expired")
+		return
+	}
+
+	clientID, clientSecret := presentedClient(r)
+
+	client, ok := h.requireClient(w, refreshToken.ClientID, "", http.StatusBadRequest)
+	if !ok {
+		return
+	}
+
+	if authenticateClient(client, clientID, clientSecret, true) != "" {
+		writeTokenError(w, http.StatusUnauthorized, "invalid_client", "Client authentication failed")
+		return
+	}
+
+	dpopJKT, ok := h.enforceClientDPoP(w, r, client)
+	if !ok {
+		return
+	}
+	tokenType := boundTokenType(client)
+	orgSlug := h.orgSlug(refreshToken.OrgID)
+
+	newAccessToken, err := h.issueAccessTokenFor(refreshToken.ClientID, refreshToken.UserID, strings.Join(refreshToken.Scopes, " "), tokenType, refreshToken.OrgID, orgSlug)
+	if err != nil {
+		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
+		return
+	}
+
+	newRefreshToken, err := crypto.GenerateToken()
+	if err != nil {
+		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate refresh token")
+		return
+	}
+
+	_ = h.tokenRepo.RevokeAccessToken(refreshToken.AccessToken)
+	_ = h.tokenRepo.RevokeRefreshToken(refreshTokenStr)
+
+	accessTok := &models.AccessToken{
+		Token:     newAccessToken,
+		ClientID:  refreshToken.ClientID,
+		UserID:    refreshToken.UserID,
+		Scopes:    refreshToken.Scopes,
+		TokenType: tokenType,
+		DPoPJKT:   dpopJKT,
+		OrgID:     refreshToken.OrgID,
+		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
+	}
+
+	familyID := refreshToken.FamilyID
+	if familyID == "" {
+		familyID = uuid.New().String()
+	}
+	newRefreshTok := &models.RefreshToken{
+		Token:       newRefreshToken,
+		AccessToken: newAccessToken,
+		ClientID:    refreshToken.ClientID,
+		UserID:      refreshToken.UserID,
+		OrgID:       refreshToken.OrgID,
+		Scopes:      refreshToken.Scopes,
+		FamilyID:    familyID,
+		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
+	}
+
+	if err := h.tokenRepo.SaveAccessToken(accessTok); err != nil {
+		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to save access token")
+		return
+	}
+
+	if err := h.tokenRepo.SaveRefreshToken(newRefreshTok); err != nil {
+		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to save refresh token")
+		return
+	}
+
+	writeTokenResponse(w, newAccessToken, newRefreshToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), tokenType, strings.Join(refreshToken.Scopes, " "))
+}

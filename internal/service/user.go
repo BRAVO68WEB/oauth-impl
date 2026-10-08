@@ -1,6 +1,8 @@
 package service
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -12,6 +14,11 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/models"
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/pkg/passhash"
+)
+
+var (
+	ErrEmailRequired = errors.New("email is required")
+	ErrEmailTaken    = errors.New("email already exists")
 )
 
 type UserService struct {
@@ -55,7 +62,7 @@ func (s *UserService) CreateUser(username, password, email, phone string) (*mode
 }
 
 func (s *UserService) InsertUser(in NewUser) (*models.User, error) {
-	in.Email = strings.TrimSpace(in.Email)
+	in.Email = normalizeEmail(in.Email)
 	if in.Username == "" || in.Password == "" {
 		return nil, fmt.Errorf("username and password are required")
 	}
@@ -93,6 +100,9 @@ func (s *UserService) InsertUser(in NewUser) (*models.User, error) {
 	}
 
 	if err := s.userRepo.Create(user); err != nil {
+		if emailConflict(err) {
+			return nil, ErrEmailTaken
+		}
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
@@ -130,19 +140,33 @@ func (s *UserService) loginIdentifier() string {
 	return s.cfg.LoginIdentifier
 }
 
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func (s *UserService) reserveEmail(userID, email string) error {
-	if s.loginIdentifier() != "email" {
-		return nil
-	}
-	email = strings.TrimSpace(email)
+	email = normalizeEmail(email)
 	if email == "" {
-		return fmt.Errorf("email is required")
+		if s.loginIdentifier() == "email" {
+			return ErrEmailRequired
+		}
+		return nil
 	}
 	existing, err := s.userRepo.GetByEmail(email)
-	if err != nil || existing == nil || existing.ID == userID {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if existing == nil || existing.ID == userID {
 		return nil
 	}
-	return fmt.Errorf("email already exists")
+	return ErrEmailTaken
+}
+
+func emailConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "idx_users_email_lower")
 }
 
 func (s *UserService) Authenticate(username, password string) (*models.User, error) {
@@ -218,11 +242,17 @@ func (s *UserService) UpdateProfile(user *models.User) error {
 	if user == nil {
 		return fmt.Errorf("user is required")
 	}
-	user.Email = strings.TrimSpace(user.Email)
+	user.Email = normalizeEmail(user.Email)
 	if err := s.reserveEmail(user.ID, user.Email); err != nil {
 		return err
 	}
-	return s.userRepo.UpdateProfile(user)
+	if err := s.userRepo.UpdateProfile(user); err != nil {
+		if emailConflict(err) {
+			return ErrEmailTaken
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *UserService) SetPassword(id, password string) error {
