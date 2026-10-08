@@ -34,16 +34,6 @@ var builtinMail = map[string]string{
 	"password_changed": "Subject: Password changed\nThe password for {{.Username}} was changed.\n\nIf you did not do this, reset it from {{.Issuer}}/forgot\n",
 	"new_sign_in":      "Subject: New sign-in\nNew sign-in for {{.Username}}\n\nTime: {{.Time}}\nIP: {{.IP}}\nAgent: {{.Agent}}\n",
 	"login_failed":     "Subject: Failed sign-in attempts\n{{.Count}} failed sign-in attempts for {{.Username}} in the last 15 minutes.\n\nLatest IP: {{.IP}}\n",
-	"mfa_email":        "Subject: Sign-in code\nYour sign-in code is {{.Code}}.\n\nIt expires in {{.TTL}}.\n",
-}
-
-// Names are the template files an operator may replace.
-func Names() []string {
-	out := make([]string, 0, len(builtinMail))
-	for name := range builtinMail {
-		out = append(out, name)
-	}
-	return out
 }
 
 // Load reads templates_dir. An empty directory uses built-in text.

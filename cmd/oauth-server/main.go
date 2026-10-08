@@ -202,7 +202,7 @@ func main() {
 	totpSvc := service.NewTOTPService(userRepo, &cfg.Security.MFA)
 	userSvc := service.NewUserService(userRepo, totpSvc, &cfg.Security, hasher)
 	clientSvc := service.NewClientService(clientRepo)
-	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
+	tokenSvc := service.NewTokenService(tokenRepo)
 	dpopSvc := service.NewDPoPServiceWithCache(store)
 	mtlsSvc := service.NewMTLSService()
 	jarSvc := service.NewJARService(cfg.Security.Issuer)

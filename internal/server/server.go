@@ -143,7 +143,7 @@ func New(cfg *config.Config, db *database.DB, q queue.Queue) (*Server, error) {
 	}
 	oauthHandler.SetTemplates(pages)
 	clientSvc := service.NewClientService(clientRepo)
-	tokenSvc := service.NewTokenService(tokenRepo, authCodeRepo, oidcHandler, &cfg.Security)
+	tokenSvc := service.NewTokenService(tokenRepo)
 	mgmtCtrl := controller.NewManagementController(clientSvc, userSvc, tokenSvc, totpSvc, scopeRepo, resourceRepo, consentRepo, accountSvc, sessionSvc, tokenRepo)
 	auditLog := service.NewAuditLog(repository.NewAuditRepository(conn))
 	mgmtCtrl.SetOrgs(orgs)

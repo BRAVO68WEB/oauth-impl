@@ -214,7 +214,7 @@ instead of that page.
 
 `email.templates_dir` replaces the built-in messages. Each file is
 named `reset.txt`, `verify.txt`, `password_changed.txt`,
-`new_sign_in.txt`, `login_failed.txt`, or `mfa_email.txt`. The first
+`new_sign_in.txt`, or `login_failed.txt`. The first
 line is `Subject: ...`. A missing file keeps the built-in text. A file
 that does not parse stops startup.
 
