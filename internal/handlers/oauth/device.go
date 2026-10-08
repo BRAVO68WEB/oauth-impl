@@ -3,6 +3,7 @@ package oauth
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -374,7 +375,7 @@ func (h *Handler) renderDevice(w http.ResponseWriter, r *http.Request, userCode,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><h1>Device authorization</h1><p>%s</p>
 <form method="POST" action="/device"><input type="hidden" name="csrf_token" value="%s"><input name="user_code" value="%s"><button name="action" value="approve">Approve</button><button name="action" value="deny">Deny</button></form></body></html>`,
-		templateEscape(errMsg), templateEscape(data["CSRFToken"].(string)), templateEscape(userCode))
+		html.EscapeString(errMsg), html.EscapeString(data["CSRFToken"].(string)), html.EscapeString(userCode))
 }
 
 func (h *Handler) renderDeviceDone(w http.ResponseWriter, approved bool) {
@@ -391,5 +392,5 @@ func (h *Handler) renderDeviceDone(w http.ResponseWriter, approved bool) {
 		msg = "Authorization denied."
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><h1>%s</h1></body></html>`, templateEscape(msg))
+	_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><h1>%s</h1></body></html>`, html.EscapeString(msg))
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -589,10 +590,10 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 <html>
 <head><title>Submit This Form</title></head>
 <body onload="javascript:document.forms[0].submit()">
-<form method="post" action="%s">`, redirectURI)
+<form method="post" action="%s">`, html.EscapeString(redirectURI))
 		for key, values := range params {
 			for _, value := range values {
-				_, _ = fmt.Fprintf(w, `<input type="hidden" name="%s" value="%s"/>`, key, value)
+				_, _ = fmt.Fprintf(w, `<input type="hidden" name="%s" value="%s"/>`, html.EscapeString(key), html.EscapeString(value))
 			}
 		}
 		_, _ = fmt.Fprintf(w, `</form></body></html>`)

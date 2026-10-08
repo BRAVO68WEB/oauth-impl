@@ -1,17 +1,15 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const https = require("node:https");
-const selfsigned = require("selfsigned");
+const path = require("node:path");
 const { startServer } = require("../support/server");
 
 function metadataServer() {
-  const pems = selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], {
-    days: 2,
-    keySize: 2048,
-    algorithm: "sha256",
-  });
+  const key = fs.readFileSync(path.join(__dirname, "../fixtures/cimd.key"));
+  const cert = fs.readFileSync(path.join(__dirname, "../fixtures/cimd.crt"));
   let hits = 0;
   let url = "";
-  const server = https.createServer({ key: pems.private, cert: pems.cert }, (request, response) => {
+  const server = https.createServer({ key, cert }, (request, response) => {
     hits += 1;
     response.setHeader("Content-Type", "application/json");
     response.end(JSON.stringify({

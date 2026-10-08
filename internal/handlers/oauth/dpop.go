@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bravo68web/oauth-impl/internal/models"
+	"github.com/bravo68web/oauth-impl/internal/service"
 	"github.com/bravo68web/oauth-impl/pkg/crypto"
 )
 
@@ -17,16 +18,16 @@ func (h *Handler) enforceClientDPoP(w http.ResponseWriter, r *http.Request, clie
 	if client == nil || !client.DPoPBoundAccessTokens {
 		return "", true
 	}
-	if err := h.ValidateDPoPProof(r, ""); err != nil {
-		writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", err.Error())
+	proof, err := h.ValidateDPoPProof(r, "")
+	if err != nil || proof == nil || proof.JKT == "" {
+		desc := "Failed to get JKT"
+		if err != nil {
+			desc = err.Error()
+		}
+		writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", desc)
 		return "", false
 	}
-	jkt, err := h.GetDPoPJKT(r)
-	if err != nil || jkt == "" {
-		writeTokenError(w, http.StatusBadRequest, "invalid_dpop_proof", "Failed to get JKT")
-		return "", false
-	}
-	return jkt, true
+	return proof.JKT, true
 }
 
 func (h *Handler) revokeDPoP(w http.ResponseWriter, r *http.Request, client *models.Client, token string) bool {
@@ -44,7 +45,7 @@ func (h *Handler) revokeDPoP(w http.ResponseWriter, r *http.Request, client *mod
 	if !needs {
 		return true
 	}
-	if err := h.ValidateDPoPProof(r, proofToken); err != nil {
+	if _, err := h.ValidateDPoPProof(r, proofToken); err != nil {
 		writeTokenError(w, http.StatusBadRequest, "invalid_token", err.Error())
 		return false
 	}
@@ -58,10 +59,10 @@ func boundTokenType(client *models.Client) string {
 	return "Bearer"
 }
 
-func (h *Handler) ValidateDPoPProof(r *http.Request, accessToken string) error {
+func (h *Handler) ValidateDPoPProof(r *http.Request, accessToken string) (*service.DPoPProof, error) {
 	dpopHeader := r.Header.Get("DPoP")
 	if dpopHeader == "" {
-		return fmt.Errorf("DPoP header is required")
+		return nil, fmt.Errorf("DPoP header is required")
 	}
 
 	// Build full URI for DPoP validation
@@ -71,12 +72,7 @@ func (h *Handler) ValidateDPoPProof(r *http.Request, accessToken string) error {
 	}
 	fullURI := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL.Path)
 
-	_, err := h.dpopSvc.ValidateDPoPProof(dpopHeader, r.Method, fullURI, accessToken)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return h.dpopSvc.ValidateDPoPProof(dpopHeader, r.Method, fullURI, accessToken)
 }
 
 func (h *Handler) GenerateDPoPBoundToken(w http.ResponseWriter, r *http.Request, clientID, userID string, scopes []string, dpopJKT string) {
@@ -122,18 +118,4 @@ func (h *Handler) GenerateDPoPBoundToken(w http.ResponseWriter, r *http.Request,
 	}
 
 	writeTokenResponse(w, accessToken, refreshToken, int(h.cfg.Security.AccessTokenLifetime.Seconds()), "DPoP", strings.Join(scopes, " "))
-}
-
-func (h *Handler) GetDPoPJKT(r *http.Request) (string, error) {
-	dpopHeader := r.Header.Get("DPoP")
-	if dpopHeader == "" {
-		return "", nil
-	}
-
-	jkt, err := h.dpopSvc.GetJKTFromProof(dpopHeader)
-	if err != nil {
-		return "", err
-	}
-
-	return jkt, nil
 }
