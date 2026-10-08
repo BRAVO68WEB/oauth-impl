@@ -110,7 +110,7 @@ func Render(set *Templates, name string, data Data) (string, string, error) {
 func parseMail(name, source string) (*template.Template, error) {
 	line, _, ok := strings.Cut(source, "\n")
 	if !ok || !strings.HasPrefix(line, "Subject: ") {
-		return nil, fmt.Errorf("first line must be Subject:")
+		return nil, fmt.Errorf("first line must start with Subject")
 	}
 	return template.New(name).Option("missingkey=error").Parse(source)
 }
