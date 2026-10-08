@@ -326,111 +326,123 @@ PATCH  /api/me
 POST   /api/me/password
 POST   /api/me/email/send
 GET    /api/me/sessions
-DELETE /api/me/sessions/:sid
+DELETE /api/me/sessions/{sid}
 GET    /api/me/refresh-tokens
-DELETE /api/me/refresh-tokens/:id
+DELETE /api/me/refresh-tokens/{id}
 GET    /api/me/activity
 GET    /api/me/login-analytics?window=720h
 ```
 
-Browser pages: `/login`, `/register`, `/consent`, `/mfa/enroll`, `/forgot`, `/reset`, `/verify-email`, `/device`, `/oauth/logout`.
+`window` is a Go duration. The default is 30 days (`720h`).
 
-`GET /login/social/{id}` redirects to an enabled provider from `social.providers`. `GET /login/social/{id}/callback` finishes sign-in. `security.disable_social_registration` returns 403 when that provider account is not already linked.
+## Management API
 
-`GET /branding/assets/{name}` serves one file from `branding.assets_dir` (png, jpg, jpeg, gif, webp, svg, ico, or css, up to 1 MiB). The page copy, colors, and optional HTML overlay come from the `branding` config block and apply on restart.
-
-## Webhooks
-
-Management token required. Each webhook chooses its events.
+Clients, users, and tokens:
 
 ```
+GET    /api/clients
+POST   /api/clients
+GET    /api/clients/{id}
+PUT    /api/clients/{id}
+DELETE /api/clients/{id}
+
+GET    /api/users
+POST   /api/users
+GET    /api/users/{id}
+PATCH  /api/users/{id}
+POST   /api/users/{id}/password
+POST   /api/users/{id}/mfa/enable
+POST   /api/users/{id}/mfa/verify
+GET    /api/users/{id}/mfa/status
+POST   /api/users/{id}/mfa/disable
+GET    /api/users/{id}/sessions
+DELETE /api/users/{id}/sessions/{sid}
+GET    /api/users/{id}/activity
+GET    /api/users/{id}/login-analytics
+
+GET    /api/tokens
+POST   /api/tokens/{token}/revoke
+GET    /api/refresh-tokens
+POST   /api/refresh-tokens/{id}/revoke
+```
+
+Refresh-token lists use the public id and omit the secret.
+
+Scopes, resources, and consents:
+
+```
+GET    /api/scopes
+POST   /api/scopes
+GET    /api/scopes/{name}
+DELETE /api/scopes/{name}
+
+GET    /api/resources
+POST   /api/resources
+GET    /api/resources/{uri}
+PUT    /api/resources/{uri}
+DELETE /api/resources/{uri}
+GET    /api/resources/{uri}/scopes
+
+GET    /api/consents
+DELETE /api/consents
+```
+
+Organizations, webhooks, audit, analytics, CIBA, and keys:
+
+```
+GET    /api/orgs
+POST   /api/orgs
+GET    /api/orgs/{orgID}
+POST   /api/orgs/{orgID}/domains
+POST   /api/orgs/{orgID}/members
+
 GET    /api/webhooks
 POST   /api/webhooks
-GET    /api/webhooks/:id
-PATCH  /api/webhooks/:id
-DELETE /api/webhooks/:id
-POST   /api/webhooks/:id/test
+GET    /api/webhooks/{id}
+PATCH  /api/webhooks/{id}
+DELETE /api/webhooks/{id}
+POST   /api/webhooks/{id}/test
+
+GET    /api/audit
+GET    /api/analytics/logins
+POST   /api/keys/rotate
+
+GET    /api/ciba/pending
+POST   /api/ciba/{id}/approve
+POST   /api/ciba/{id}/deny
 ```
 
-`POST` body: `url`, `events` (or `["*"]`), optional `secret`, `description`, `enabled`.
-Deliveries are JSON with `X-Webhook-Event`, `X-Webhook-Timestamp`, and
-`X-Webhook-Signature: sha256=<hmac of timestamp + "." + body>`.
+`oauth-mobile` calls `GET /ciba/pending`, `POST /ciba/approve`, and
+`POST /ciba/deny`. Its `status` command calls `GET /health`.
 
-### CIBA
+Webhook deliveries are `POST` JSON. `X-Webhook-Signature` is `sha256=`
+plus the hex HMAC-SHA256 of the timestamp, a dot, and the raw body, using
+the webhook secret.
+`X-Webhook-Timestamp` is the unix time. `X-Webhook-Event` is the event
+name. `*` subscribes to every event. Events include `login`,
+`login_failed`, `logout`, `sso_session_triggered`,
+`bruteforce_detected`, `forgot_password`, `change_password`,
+`password_reset`, `user_registered`, `email_verified`, and
+`user_disabled`. A delivery error is logged and does not fail the user
+action. `POST /api/webhooks/{id}/test` sends `webhook.test`.
 
-```
-GET  /api/ciba/pending       - List pending CIBA requests
-POST /api/ciba/:id/approve   - Approve CIBA request
-POST /api/ciba/:id/deny      - Deny CIBA request
-```
+`POST /api/keys/rotate` returns the new key ids. Private keys stay in
+SQL. See [Infrastructure](INFRA.md).
 
----
+## Errors
 
-## Supported Scopes
-
-- `openid` - OpenID Connect
-- `profile` - User profile information
-- `email` - User email address
-- `address` - User address
-- `phone` - User phone number
-- `offline_access` - Refresh tokens
-
----
-
-## Security Features
-
-### PKCE (RFC 7636)
-Supports `S256` and `plain` code challenge methods.
-
-### DPoP (RFC 9449)
-Sender-constrained tokens using proof-of-possession.
-
-### Token Types
-- `Bearer` - Standard bearer tokens
-- `DPoP` - Proof-of-possession tokens
-
----
-
-## Error Responses
-
-All errors follow RFC 6749 format:
+Protocol errors use the OAuth shape:
 
 ```json
 {
   "error": "invalid_request",
-  "error_description": "Description of the error"
+  "error_description": "what went wrong"
 }
 ```
 
-`/api` routes other than self-service registration, forgot-password, reset, and email verify require a bearer token. Management routes require a client-credentials token whose scope includes `management`. A user token receives 403.
+The OpenAPI document lists status codes per route.
 
-```
-GET   /api/audit?window=720h&action=&actor_id=
-POST  /api/keys/rotate
-```
+## Related
 
-`POST /api/keys/rotate` publishes new RSA and EC signing keys and keeps the previous public keys until `key_retain` elapses. The response lists key ids. Private keys stay in SQLite.
-
-`dpop_bound_access_tokens` on an OAuth app forces a DPoP proof on every token grant, on UserInfo, and on revocation of a bound token. `security.dpop.enabled` only controls whether other apps may send an unsolicited proof.
-
-Dynamic client registration (`POST /oauth/register`) is open when `registration.dcr_enabled` is true. The new row is stored with `registration_source=dcr` and `dcr_enabled=true`. Authorize and token reject that client with `unauthorized_client` unless both the tenant flag and the row flag stay true. An HTTPS `client_id` is a Client ID Metadata Document when `registration.cimd_enabled` is true and the row is not disabled.
-
-Browser POSTs to `/login`, `/register`, `/consent`, `/forgot`, `/reset`, `/mfa/enroll/verify`, `/device`, and `/oauth/logout` require the `csrf_token` field copied from the form. A mismatch is 403 `csrf_failed`.
-
-`POST /login`, `POST /register`, and `POST /forgot` check `bot_token` when `security.bot_protection.provider` is `recaptcha` or `turnstile`. A missing or rejected token is 400 `bot_failed`.
-
-Password creates, resets, and changes use `security.password`. A failure is 400 `invalid_password`. Login does not recheck complexity.
-
-ID tokens and UserInfo use `oidc.claim_mappings` when that list is non-empty. An empty list keeps the scope claims from `profile`, `email`, and `phone`.
-
-Common error codes:
-- `invalid_request` - Malformed request
-- `invalid_client` - Client authentication failed
-- `invalid_password` - Password does not meet the configured complexity rules
-- `bot_failed` - Bot token missing or rejected
-- `csrf_failed` - Browser form token missing or mismatched
-- `registration_disabled` - Self-service signup or dynamic client registration is turned off
-- `invalid_grant` - Invalid authorization grant
-- `unauthorized_client` - Client not authorized for grant type
-- `unsupported_grant_type` - Grant type not supported
-- `invalid_scope` - Invalid scope requested
+[CLI](CLI.md) calls these routes.
+[Configuration](CONFIG.md) is the issuer and client policy behind them.
