@@ -432,6 +432,7 @@ func (db *DB) Migrate() error {
 		`ALTER TABLE clients ADD COLUMN userinfo_encrypted_response_enc TEXT`,
 		`ALTER TABLE clients ADD COLUMN org_id TEXT`,
 		`ALTER TABLE authorization_codes ADD COLUMN org_id TEXT`,
+		`ALTER TABLE authorization_codes ADD COLUMN requested_actor TEXT`,
 	}
 	for _, alter := range alters {
 		if _, err := db.Exec(alter); err != nil && db.driver == "postgres" && !isDuplicateColumn(err) {

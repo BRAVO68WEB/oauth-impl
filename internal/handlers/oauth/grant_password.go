@@ -94,7 +94,7 @@ func (h *Handler) handlePasswordToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := h.issueAccessTokenFor(clientID, user.ID, strings.Join(scopes, " "), tokenType, orgID, orgSlug)
+	accessToken, err := h.issueAccessTokenFor(clientID, user.ID, strings.Join(scopes, " "), tokenType, orgID, orgSlug, "", "")
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return

@@ -66,6 +66,7 @@ type AuthorizationCode struct {
 	SessionID           string    `json:"-"`
 	AuthTime            time.Time `json:"-"`
 	OrgID               string    `json:"org_id,omitempty"`
+	RequestedActor      string    `json:"requested_actor,omitempty"`
 	ExpiresAt           time.Time `json:"expires_at"`
 	Used                bool      `json:"used"`
 }

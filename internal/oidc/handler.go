@@ -148,16 +148,15 @@ func (h *Handler) CreateIDTokenWithES256(clientID, userID, nonce string, scopes 
 }
 
 // CreateAccessTokenJWT signs an access token with the active RSA key.
-// Callers still store the compact token so revocation and UserInfo keep working.
-func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string, lifetime time.Duration, orgID, orgSlug string) (string, error) {
+// The profile is RFC 9068: typ at+jwt, aud is the resource or the issuer,
+// and client_id plus azp name the client. Callers still store the compact
+// token so revocation and UserInfo keep working.
+func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, _ string, lifetime time.Duration, orgID, orgSlug, resource, actor string) (string, error) {
 	if h == nil || h.keySet == nil {
 		return "", fmt.Errorf("signing keys are not loaded")
 	}
 	if lifetime <= 0 {
 		lifetime = time.Hour
-	}
-	if tokenType == "" {
-		tokenType = "Bearer"
 	}
 	sub, err := h.SubjectFor(clientID, userID)
 	if err != nil {
@@ -168,16 +167,20 @@ func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string
 		return "", err
 	}
 	now := time.Now()
+	audience := h.issuer()
+	if strings.TrimSpace(resource) != "" {
+		audience = resource
+	}
 	claims := jwt.MapClaims{
-		"iss":        h.issuer(),
-		"sub":        sub,
-		"aud":        clientID,
-		"exp":        now.Add(lifetime).Unix(),
-		"iat":        now.Unix(),
-		"jti":        hex.EncodeToString(raw),
-		"client_id":  clientID,
-		"scope":      scope,
-		"token_type": tokenType,
+		"iss":       h.issuer(),
+		"sub":       sub,
+		"aud":       audience,
+		"exp":       now.Add(lifetime).Unix(),
+		"iat":       now.Unix(),
+		"jti":       hex.EncodeToString(raw),
+		"client_id": clientID,
+		"azp":       clientID,
+		"scope":     scope,
 	}
 	if orgID != "" {
 		claims["org_id"] = orgID
@@ -185,11 +188,47 @@ func (h *Handler) CreateAccessTokenJWT(clientID, userID, scope, tokenType string
 	if orgSlug != "" {
 		claims["org_slug"] = orgSlug
 	}
+	if actor != "" {
+		claims["act"] = map[string]string{"sub": actor}
+	}
 	key, kid := h.keySet.GetRSAKey()
 	if key == nil {
 		return "", fmt.Errorf("no active rsa signing key")
 	}
-	return signIDToken(jwt.SigningMethodRS256, kid, key, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = kid
+	token.Header["typ"] = "at+jwt"
+	return token.SignedString(key)
+}
+
+// AccessTokenSubject verifies an access token this server signed and returns sub.
+func (h *Handler) AccessTokenSubject(raw string) (string, error) {
+	if h == nil || h.keySet == nil {
+		return "", fmt.Errorf("signing keys are not loaded")
+	}
+	claims := jwt.MapClaims{}
+	token, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) {
+		if t.Method == nil || t.Method.Alg() != jwt.SigningMethodRS256.Alg() {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		kid, _ := t.Header["kid"].(string)
+		if key, ok := h.keySet.publicByKid(kid); ok {
+			return key, nil
+		}
+		return nil, fmt.Errorf("unknown signing key")
+	})
+	if err != nil || token == nil || !token.Valid {
+		return "", fmt.Errorf("invalid access token")
+	}
+	iss, _ := claims["iss"].(string)
+	if iss != h.issuer() {
+		return "", fmt.Errorf("invalid access token")
+	}
+	sub, _ := claims["sub"].(string)
+	if sub == "" {
+		return "", fmt.Errorf("invalid access token")
+	}
+	return sub, nil
 }
 
 func signIDToken(method jwt.SigningMethod, kid string, key any, claims jwt.Claims) (string, error) {

@@ -75,7 +75,8 @@ func (h *Handler) handleClientCredentialsToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	accessToken, err := h.issueAccessTokenFor(clientID, "", strings.Join(scopes, " "), tokenType, orgID, orgSlug)
+	resource := r.Form.Get("resource")
+	accessToken, err := h.issueAccessTokenFor(clientID, "", strings.Join(scopes, " "), tokenType, orgID, orgSlug, resource, "")
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -87,6 +88,7 @@ func (h *Handler) handleClientCredentialsToken(w http.ResponseWriter, r *http.Re
 		Scopes:    scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		Resource:  resource,
 		OrgID:     orgID,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}

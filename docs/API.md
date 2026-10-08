@@ -1,324 +1,150 @@
-# OAuth Implementation Server - API Documentation
-
-## Overview
-
-This OAuth 2.0 / OpenID Connect implementation server supports all major OAuth flows and extensions for testing and development purposes.
-
-## Base URL
-
-```
-http://localhost:8080
-```
-
-## OAuth 2.0 Endpoints
-
-### Authorization Endpoint
-
-```
-GET/POST /oauth/authorize
-```
-
-Initiates the authorization code flow.
-
-**Parameters:**
-- `client_id` (required) - Client identifier
-- `response_type` (required) - Must be `code`
-- `redirect_uri` (required) - Callback URL
-- `scope` (optional) - Space-separated scopes
-- `state` (recommended) - CSRF protection
-- `code_challenge` (optional) - PKCE challenge
-- `code_challenge_method` (optional) - `S256` or `plain`
-- `nonce` (optional) - For OpenID Connect
-
-**Response:** Redirects to `redirect_uri` with an authorization code.
-
-A client may register `urn:ietf:wg:oauth:2.0:oob` or `urn:ietf:wg:oauth:2.0:oob:auto` instead of an HTTP callback. The request must use `response_type=code` and PKCE `S256`. After sign-in the server returns an HTML page with the code. The token request sends that same `redirect_uri` back with the pasted code and `code_verifier`. `oauth-cli flow paste` prints the URL and reads the code.
-
-When `security.oob_helper` is true, `GET /oauth/oob` is the helper page from draft-richer-oauth-oob-authcode. Register that URL as a normal redirect URI. The authorization response is still a redirect, with `code` and `state` on the query string. The page shows one combined value. The draft names an HKDF info parameter and does not assign its bytes. This server uses the ASCII string `draft-richer-oauth-oob-authcode`. With the flag off, the path returns 404.
-
----
-
-### Token Endpoint
-
-```
-POST /oauth/token
-```
-
-Exchanges authorization grants for tokens.
-
-**Grant Types:**
-
-#### Authorization Code Grant
-```
-grant_type=authorization_code
-code=<authorization_code>
-redirect_uri=<redirect_uri>
-code_verifier=<code_verifier>
-```
-
-#### Client Credentials Grant
-```
-grant_type=client_credentials
-scope=<scopes>
-```
-
-#### Refresh Token Grant
-```
-grant_type=refresh_token
-refresh_token=<refresh_token>
-```
-
-#### Device Code Grant
-```
-grant_type=urn:ietf:params:oauth:grant-type:device_code
-device_code=<device_code>
-```
-
-#### CIBA Grant
-```
-grant_type=urn:openid:params:grant-type:ciba
-auth_req_id=<auth_req_id>
-```
-
-**Response:**
-```json
-{
-  "access_token": "...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "...",
-  "scope": "openid profile",
-  "id_token": "..."  // If openid scope present
-}
-```
-
----
-
-### Token Revocation (RFC 7009)
-
-```
-POST /oauth/revoke
-```
-
-Revokes access or refresh tokens.
-
-**Parameters:**
-- `token` (required) - Token to revoke
-- `token_type_hint` (optional) - `access_token` or `refresh_token`
-
----
-
-### Token Introspection (RFC 7662)
-
-```
-POST /oauth/introspect
-```
-
-Validates and returns token metadata.
-
-**Parameters:**
-- `token` (required) - Token to introspect
-
-**Response:**
-```json
-{
-  "active": true,
-  "scope": "openid profile",
-  "client_id": "...",
-  "username": "...",
-  "token_type": "Bearer",
-  "exp": 1234567890,
-  "iat": 1234567890,
-  "sub": "..."
-}
-```
-
----
-
-### Dynamic Client Registration (RFC 7591)
-
-```
-POST /oauth/register
-```
-
-Registers a new OAuth client.
-
-**Request Body:**
-```json
-{
-  "client_name": "My App",
-  "redirect_uris": ["https://example.com/callback"],
-  "grant_types": ["authorization_code"],
-  "scope": "openid profile"
-}
-```
-
-**Response:**
-```json
-{
-  "client_id": "...",
-  "client_secret": "...",
-  "client_name": "My App",
-  "redirect_uris": ["https://example.com/callback"],
-  "grant_types": ["authorization_code"],
-  "token_endpoint_auth_method": "client_secret_basic"
-}
-```
-
----
-
-### Device Authorization (RFC 8628)
-
-```
-POST /oauth/device
-```
-
-Initiates device authorization flow.
-
-**Response:**
-```json
-{
-  "device_code": "...",
-  "user_code": "ABCD-EFGH",
-  "verification_uri": "http://localhost:8080/device",
-  "verification_uri_complete": "http://localhost:8080/device?user_code=ABCD-EFGH",
-  "expires_in": 1800,
-  "interval": 5
-}
-```
-
----
-
-### Pushed Authorization Requests (RFC 9126)
-
-```
-POST /oauth/par
-```
-
-Pushes authorization request parameters to the server.
-
-**Request Body:** Same as authorization endpoint parameters
-
-**Response:**
-```json
-{
-  "request_uri": "urn:ietf:params:oauth:request_uri:...",
-  "expires_in": 60
-}
-```
-
----
-
-### CIBA Backchannel Authentication
-
-```
-POST /oauth/bc-authorize
-```
-
-Initiates Client-Initiated Backchannel Authentication.
-
-**Parameters:**
-- `scope` (required) - Must include `openid`
-- `login_hint` (required*) - User identifier
-- `binding_message` (optional) - Display message
-- `client_notification_token` (required for ping/push)
-
-**Response:**
-```json
-{
-  "auth_req_id": "...",
-  "expires_in": 120,
-  "interval": 5
-}
-```
-
----
-
-## OIDC Endpoints
-
-### Discovery
-
-```
-GET /.well-known/openid-configuration
-```
-
-Returns OpenID Connect discovery metadata.
-
-### JWKS
-
-```
-GET /oidc/jwks
-```
-
-Returns JSON Web Key Set for token verification.
-
-### UserInfo
-
-```
-GET /oidc/userinfo
-Authorization: Bearer <access_token>
-```
-
-Returns user profile information based on scopes.
-
----
-
-## Management API
-
-`/api` and `/ciba` require `Authorization: Bearer` with a client-credentials
-access token whose scope contains `management`. Obtain it from `POST /oauth/token`
-with `grant_type=client_credentials&scope=management`.
-
-`oauth-cli init` writes that client into `management.client_id` and
-`management.client_secret`. The server inserts the client on startup when
-the id is missing.
-
-### Clients
-
-```
-GET    /api/clients          - List all clients
-POST   /api/clients          - Create client
-GET    /api/clients/:id      - Get client
-PUT    /api/clients/:id      - Update client
-DELETE /api/clients/:id      - Delete client
-```
-
-### Users
-
-```
-GET  /api/users              - List all users
-POST /api/users              - Create user
-GET  /api/users/:id          - Get user
-PATCH /api/users/:id         - Update profile, disabled, email_verified
-POST /api/users/:id/password - Set password
-GET  /api/users/:id/sessions - List browser sessions
-DELETE /api/users/:id/sessions/:sid
-GET  /api/users/:id/activity - Login activity
-GET  /api/users/:id/login-analytics?window=720h
-GET  /api/analytics/logins?window=720h - All users, grouped by IP and day
-```
-
-### Tokens
-
-```
-GET  /api/tokens             - List access tokens (filter by client_id, user_id)
-POST /api/tokens/:token/revoke - Revoke access token
-GET  /api/refresh-tokens     - List refresh tokens by public id
-POST /api/refresh-tokens/:id/revoke
-```
-
-## CIAM API
-
-Public routes:
-
-```
-POST /api/account/register   - 403 registration_disabled when security.disable_registration is true
-POST /api/account/password/forgot
-POST /api/account/password/reset
-POST /api/account/email/verify
-```
-
-User access token routes:
+# API
+
+The field-level contract is the OpenAPI document. This page is the route
+map. Command equivalents are in [CLI](CLI.md). Sample curls are in
+[examples.sh](examples.sh).
+
+| Document | Where |
+| --- | --- |
+| Spec source | `openapi/spec.yaml` |
+| Scalar UI | `GET /docs` |
+| Spec JSON | `GET /openapi` |
+| Spec YAML | `GET /docs/openapi.yaml` |
+
+`just docs` prints those URLs for a server on port 8080.
+
+## Who can call what
+
+`/api` management routes and `/ciba` need `Authorization: Bearer` with a
+client-credentials token whose scope contains `management`. `oauth-cli
+init` writes that client into `management.client_id` and
+`management.client_secret`. The server inserts the client on startup
+when the id is missing.
+
+A user access token calls `/api/me`. It cannot call the management
+routes. Dynamic registration drops the `management` scope. A
+client-credentials request can only receive scopes already stored on
+the client.
+
+Public account routes are `POST /api/account/register`,
+`POST /api/account/password/forgot`, `POST /api/account/password/reset`,
+and `POST /api/account/email/verify`.
+
+`GET /health` needs no token.
+
+## OAuth and OIDC
+
+| Method | Path | Role |
+| --- | --- | --- |
+| GET, POST | `/oauth/authorize` | Authorization endpoint |
+| GET | `/oauth/oob` | Combined-code helper |
+| POST | `/oauth/token` | Token endpoint |
+| POST | `/oauth/revoke` | Revoke a token (RFC 7009) |
+| POST | `/oauth/introspect` | Introspect a token (RFC 7662) |
+| POST | `/oauth/register` | Dynamic client registration |
+| POST | `/oauth/device` | Device authorization |
+| POST | `/oauth/par` | Pushed authorization request |
+| POST | `/oauth/bc-authorize` | CIBA backchannel authentication |
+| GET, POST | `/oauth/logout` | RP-initiated logout |
+| GET | `/.well-known/openid-configuration` | OIDC discovery |
+| GET | `/.well-known/oauth-authorization-server` | Authorization server metadata |
+| GET | `/oidc/jwks` | Signing keys |
+| GET | `/oidc/userinfo` | UserInfo |
+
+`POST /oauth/token` accepts these `grant_type` values when the client
+allows them:
+
+| Grant | `grant_type` |
+| --- | --- |
+| Authorization code | `authorization_code` |
+| Client credentials | `client_credentials` |
+| Refresh | `refresh_token` |
+| Device code | `urn:ietf:params:oauth:grant-type:device_code` |
+| CIBA | `urn:openid:params:grant-type:ciba` |
+| Token exchange | `urn:ietf:params:oauth:grant-type:token-exchange` |
+| Password | `password` |
+
+The default discovery list includes every grant above except `password`.
+`oauth-cli client master` creates a client that includes `password`.
+The password grant sends the identifier in `username`. CIBA on this
+server is poll mode.
+
+A client can register `urn:ietf:wg:oauth:2.0:oob` or
+`urn:ietf:wg:oauth:2.0:oob:auto` instead of an HTTP callback. The request
+must use `response_type=code` and PKCE `S256`. After sign-in the server
+returns an HTML page that shows the code. The token request sends that
+same `redirect_uri` with the pasted code and `code_verifier`. `oauth-cli
+flow paste` prints the URL and reads the code.
+
+When `security.oob_helper` is true, `GET /oauth/oob` is the helper page
+from draft-richer-oauth-oob-authcode. Register that URL as a normal
+redirect URI. The authorization response is still a redirect, with `code`
+and `state` on the query string. The page shows one combined value. The
+draft names an HKDF info parameter and does not assign its bytes. This
+server uses the ASCII string `draft-richer-oauth-oob-authcode`. With the
+flag off, the path returns 404.
+
+An authorization request may include `requested_actor`, the client id
+of an agent registered on this server. That request requires PKCE
+`S256`. The consent screen names the agent and is shown on every such
+request. The token request then includes `actor_token`, an access token
+this server already issued to that agent. The access token is a JWT
+(`typ` `at+jwt`) even when the server default is opaque. `sub` is the
+user, `aud` is the resource or the issuer, `client_id` and `azp` are the
+calling client, and `act` is `{"sub":"<agent client id>"}`. A code
+without `requested_actor` rejects `actor_token`.
+
+JWT access tokens from every grant use that same profile. `aud` is the
+`resource` parameter when the request sends one, and the issuer
+otherwise.
+
+`POST /oauth/introspect` is for confidential clients. A client sees its
+own tokens, tokens whose resource is that client, or every token when
+it is the management client. Anyone else gets `{"active":false}`.
+
+Authorize `response_type`:
+
+| Response type | Returns |
+| --- | --- |
+| `code` | Authorization code |
+| `token` | Access token |
+| `id_token` | ID token |
+| `code id_token` | Code and ID token |
+| `code token` | Code and access token |
+| `code id_token token` | All three |
+| `id_token token` | ID token and access token |
+| `none` | No token, `state` only |
+
+ID tokens and UserInfo are signed. They are encrypted as a nested JWE
+only when the client sets the encryption algorithms and publishes an
+RSA key. Access tokens stay unencrypted. A client with `subject_type:
+pairwise` receives a sector subject. See [Configuration](CONFIG.md).
+
+## Browser
+
+| Method | Path | Role |
+| --- | --- | --- |
+| GET, POST | `/login` | Password form |
+| POST | `/login/mfa` | TOTP step |
+| GET | `/login/social/{id}` | Start social login |
+| GET | `/login/social/{id}/callback` | Finish social login |
+| GET, POST | `/register` | Self-service signup |
+| GET, POST | `/consent` | Consent |
+| GET, POST | `/organization` | Choose an organization |
+| GET, POST | `/forgot`, `/reset` | Password reset pages |
+| GET | `/verify-email` | Email confirmation page |
+| GET, POST | `/device` | Device-code approval |
+| GET | `/mfa/enroll` | TOTP enrollment |
+| POST | `/mfa/enroll/verify` | Confirm enrollment |
+| GET | `/branding/assets/{name}` | One branding file |
+
+`/organization` appears when organizations are on, the request did not
+name one, and the user has more than one membership. See
+[Configuration](CONFIG.md).
+
+## Account API
+
+User token:
 
 ```
 GET    /api/me

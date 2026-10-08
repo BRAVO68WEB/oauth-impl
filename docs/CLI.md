@@ -110,10 +110,21 @@ Enrollment in the CLI is TOTP.
 
 ./bin/oauth-cli flow client-credentials --client-id <id> --client-secret <secret>
 ./bin/oauth-cli flow device --client-id <id> --client-secret <secret>
+./bin/oauth-cli flow paste --client-id <id>
 
 ./bin/oauth-cli keys generate --output ./keys
 ./bin/oauth-cli keys rotate
 ```
+
+`flow paste` prints an authorize URL and waits for a code copied from the
+browser. The client must allow `authorization_code` and register
+`urn:ietf:wg:oauth:2.0:oob`. Pass `--client-secret` for a confidential
+client. Leave it off when `token_endpoint_auth_method` is `none`.
+
+Set `security.oob_helper` to serve `/oauth/oob`. Register that URL as the
+client's redirect URI and pass it to `--redirect-uri`. The page shows one
+combined value. The command unwraps it with the `state` it stored. Pasting
+the page address works as well. The flag is off unless you set it.
 
 `keys generate` writes DPoP and client signing keys for OAuch.
 `--dpop-only` and `--client-only` limit the files. `keys rotate` calls

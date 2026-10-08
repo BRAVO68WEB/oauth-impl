@@ -423,6 +423,11 @@ paths:
 
         When `security.oob_helper` is true, `GET /oauth/oob` displays the combined
         code from draft-richer-oauth-oob-authcode after a normal redirect to that URI.
+
+        `requested_actor` names a registered agent client. That request requires
+        PKCE S256. The user consents to that agent, and the token request
+        includes `actor_token`, an access token already issued to the agent.
+        The resulting access token is a JWT with an `act` claim.
       operationId: authorize
       parameters:
         - name: client_id
@@ -528,6 +533,10 @@ paths:
           description: User ID for auto-approval (testing only, not part of standard OAuth)
           example: "b5c6d7e8-f9a0-1234-5678-9abcdef01234"
       responses:
+        "200":
+          description: |
+            HTML page containing the authorization code when `redirect_uri` is
+            `urn:ietf:wg:oauth:2.0:oob` or `urn:ietf:wg:oauth:2.0:oob:auto`.
         "302":
           description: |
             Redirect to client with authorization code. The `Location` header contains the
@@ -549,6 +558,40 @@ paths:
                 error_description: "client_id is required"
                 state: "abc123xyz"
 
+  /oauth/oob:
+    get:
+      tags: [OAuth 2.0]
+      summary: Combined authorization code helper
+      description: |
+        Serves the combined-code page from draft-richer-oauth-oob-authcode.
+        The route is always registered. It returns 404 unless `security.oob_helper`
+        is true. A normal authorization redirect lands here with `code` and `state`.
+        The page shows one combined value. An `error` query without `code` shows
+        the error page. Missing `code` or `state` returns 400.
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+          description: Authorization code from the redirect
+        - name: state
+          in: query
+          schema: { type: string }
+          description: State from the authorization request
+        - name: error
+          in: query
+          schema: { type: string }
+          description: OAuth error code when authorization failed
+        - name: error_description
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: HTML page with the combined code, or the error page
+        "400":
+          description: code and state are required
+        "404":
+          description: security.oob_helper is false
+
   /oauth/token:
     post:
       tags: [OAuth 2.0]
@@ -556,7 +599,7 @@ paths:
       description: |
         Exchanges an authorization grant for tokens. Supports multiple grant types:
 
-        - **authorization_code**: Exchange an authorization code for tokens (requires `code`, `redirect_uri`, optionally `code_verifier`)
+        - **authorization_code**: Exchange an authorization code for tokens (requires `code`, `redirect_uri`, optionally `code_verifier`; `actor_token` is required when the code was issued for `requested_actor`)
         - **client_credentials**: Get a token for the client itself (no user involved)
         - **refresh_token**: Get a new access token using a refresh token
         - **device_code**: Poll for device authorization completion (RFC 8628)

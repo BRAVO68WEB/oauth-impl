@@ -1,6 +1,7 @@
 {{template "head" .}}
 {{template "brand_header" .}}
     <p class="lede"><strong>{{if .Brand.ClientName}}{{.Brand.ClientName}}{{else}}{{.ClientID}}{{end}}</strong> is requesting access. Signed in as <strong>{{.Username}}</strong>.</p>
+    {{if .ActorName}}<p class="lede">This lets <strong>{{.ActorName}}</strong> act on your behalf.</p>{{end}}
     <div class="scope-list">
         <h3>Requested access</h3>
         {{range .Scopes}}
