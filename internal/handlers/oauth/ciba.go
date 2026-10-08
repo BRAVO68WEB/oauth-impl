@@ -96,10 +96,8 @@ func (h *Handler) HandleBCAuthorize(w http.ResponseWriter, r *http.Request) {
 	expiresIn := 600 // Default 10 minutes
 
 	resolvedUserID := ""
-	if h.userRepo != nil {
-		if user, err := h.userRepo.GetByUsername(loginHint); err == nil {
-			resolvedUserID = user.ID
-		} else if user, err := h.userRepo.GetByEmail(loginHint); err == nil {
+	if h.userSvc != nil {
+		if user, err := h.userSvc.FindByLogin(loginHint); err == nil && user != nil {
 			resolvedUserID = user.ID
 		}
 	}

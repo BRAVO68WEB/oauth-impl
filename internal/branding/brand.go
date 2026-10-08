@@ -26,6 +26,7 @@ type View struct {
 	PrivacyURL      string
 	TermsURL        string
 	ShowRegister    bool
+	Autocomplete    string
 	ShowForgot      bool
 	CustomCSS       bool
 	ClientName      string
@@ -50,7 +51,7 @@ func Prepare(cfg *config.Config) Theme {
 	primary := safeColor(b.PrimaryColor, "#0066ff")
 	view := View{
 		ProductName:     b.ProductName,
-		UsernameLabel:   b.UsernameLabel,
+		UsernameLabel:   usernameLabel(cfg, b.UsernameLabel),
 		PasswordLabel:   b.PasswordLabel,
 		SubmitLabel:     b.SubmitLabel,
 		LogoURL:         assetURL(b.LogoFile),
@@ -63,6 +64,7 @@ func Prepare(cfg *config.Config) Theme {
 		PrivacyURL:      b.PrivacyURL,
 		TermsURL:        b.TermsURL,
 		ShowRegister:    (b.ShowRegister == nil || *b.ShowRegister) && (cfg == nil || !cfg.Security.DisableRegistration),
+		Autocomplete:    loginAutocomplete(cfg),
 		ShowForgot:      b.ShowForgotPassword == nil || *b.ShowForgotPassword,
 		CustomCSS:       b.AssetsDir != "" && AssetExists(b.AssetsDir, "custom.css"),
 	}
@@ -71,6 +73,23 @@ func Prepare(cfg *config.Config) Theme {
 		title = "Sign In"
 	}
 	return Theme{view: view, loginTitle: title}
+}
+
+func usernameLabel(cfg *config.Config, label string) string {
+	if cfg != nil && cfg.Security.LoginIdentifier == "email" && (label == "" || label == "Username") {
+		return "Email"
+	}
+	if label == "" {
+		return "Username"
+	}
+	return label
+}
+
+func loginAutocomplete(cfg *config.Config) string {
+	if cfg != nil && cfg.Security.LoginIdentifier == "email" {
+		return "email"
+	}
+	return "username"
 }
 
 // LoginTitle is the login page heading after defaults are applied.

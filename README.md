@@ -212,6 +212,11 @@ consent, unless the client is bound to an organization or the request
 already names one. `prompt=none` returns `interaction_required`
 instead of that page.
 
+`security.login_identifier` is `username` or `email`. The default is
+`username`. The password grant still sends the value in `username`.
+When the setting is `email`, sign-in, forgot-password, and that grant
+look up the mailbox, and a second account cannot reuse it.
+
 ### Config Structure
 
 ```yaml
@@ -245,6 +250,7 @@ security:
   device_code_lifetime: 1800s
   ciba_request_lifetime: 120s
   request_uri_lifetime: 60s
+  login_identifier: username
   require_pkce: true
   allow_plain_pkce: false
   issuer: "http://localhost:8080"

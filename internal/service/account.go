@@ -354,16 +354,14 @@ func (a *AccountService) afterCredentialChange(userID, keepAccess, keepSID strin
 }
 
 func (a *AccountService) findUser(identifier string) *models.User {
-	if identifier == "" {
+	if a == nil || a.users == nil || identifier == "" {
 		return nil
 	}
-	if user, err := a.userRepo.GetByUsername(identifier); err == nil {
-		return user
+	user, err := a.users.FindByLogin(identifier)
+	if err != nil {
+		return nil
 	}
-	if user, err := a.userRepo.GetByEmail(identifier); err == nil {
-		return user
-	}
-	return nil
+	return user
 }
 
 func (a *AccountService) sendVerify(user *models.User) error {

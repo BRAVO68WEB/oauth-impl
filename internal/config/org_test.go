@@ -13,6 +13,24 @@ func TestOrgFlagsDefaultOff(t *testing.T) {
 	}
 }
 
+func TestLoginIdentifier(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Normalize()
+	if cfg.Security.LoginIdentifier != "username" {
+		t.Fatalf("identifier = %q", cfg.Security.LoginIdentifier)
+	}
+	cfg.Security.LoginIdentifier = "EMAIL"
+	cfg.Normalize()
+	if err := ValidatePlatform(cfg); err != nil || cfg.Security.LoginIdentifier != "email" {
+		t.Fatalf("identifier = %q err %v", cfg.Security.LoginIdentifier, err)
+	}
+	cfg.Security.LoginIdentifier = "phone"
+	cfg.Normalize()
+	if err := ValidatePlatform(cfg); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
 func TestDomainAutolookupRequiresOrgs(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Org.EnabledDomainBasedAutolookup = true

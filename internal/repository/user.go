@@ -93,7 +93,7 @@ func (r *UserRepository) GetByUsername(username string) (*models.User, error) {
 }
 
 func (r *UserRepository) GetByEmail(email string) (*models.User, error) {
-	return scanUser(r.db.QueryRow(`SELECT `+userColumns+` FROM users WHERE email = ?`, email).Scan)
+	return scanUser(r.db.QueryRow(`SELECT `+userColumns+` FROM users WHERE lower(email) = lower(?)`, email).Scan)
 }
 
 func (r *UserRepository) List() ([]*models.User, error) {

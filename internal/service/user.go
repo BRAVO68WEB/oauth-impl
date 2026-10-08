@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,6 +55,7 @@ func (s *UserService) CreateUser(username, password, email, phone string) (*mode
 }
 
 func (s *UserService) InsertUser(in NewUser) (*models.User, error) {
+	in.Email = strings.TrimSpace(in.Email)
 	if in.Username == "" || in.Password == "" {
 		return nil, fmt.Errorf("username and password are required")
 	}
@@ -66,6 +68,9 @@ func (s *UserService) InsertUser(in NewUser) (*models.User, error) {
 	existing, _ := s.userRepo.GetByUsername(in.Username)
 	if existing != nil {
 		return nil, fmt.Errorf("username already exists")
+	}
+	if err := s.reserveEmail("", in.Email); err != nil {
+		return nil, err
 	}
 
 	hashedPassword, err := s.hasher.Hash(in.Password)
@@ -106,12 +111,46 @@ func (s *UserService) ListUsers() ([]*models.User, error) {
 	return s.userRepo.List()
 }
 
+// FindByLogin looks up the account named by security.login_identifier.
+func (s *UserService) FindByLogin(identifier string) (*models.User, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if s.loginIdentifier() == "email" {
+		return s.userRepo.GetByEmail(strings.ToLower(identifier))
+	}
+	return s.userRepo.GetByUsername(identifier)
+}
+
+func (s *UserService) loginIdentifier() string {
+	if s == nil || s.cfg == nil || s.cfg.LoginIdentifier == "" {
+		return "username"
+	}
+	return s.cfg.LoginIdentifier
+}
+
+func (s *UserService) reserveEmail(userID, email string) error {
+	if s.loginIdentifier() != "email" {
+		return nil
+	}
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return fmt.Errorf("email is required")
+	}
+	existing, err := s.userRepo.GetByEmail(email)
+	if err != nil || existing == nil || existing.ID == userID {
+		return nil
+	}
+	return fmt.Errorf("email already exists")
+}
+
 func (s *UserService) Authenticate(username, password string) (*models.User, error) {
 	if username == "" || password == "" {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	user, err := s.userRepo.GetByUsername(username)
+	user, err := s.FindByLogin(username)
 	if err != nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
@@ -176,6 +215,13 @@ func (s *UserService) SetAttributes(id string, attrs map[string]string) error {
 }
 
 func (s *UserService) UpdateProfile(user *models.User) error {
+	if user == nil {
+		return fmt.Errorf("user is required")
+	}
+	user.Email = strings.TrimSpace(user.Email)
+	if err := s.reserveEmail(user.ID, user.Email); err != nil {
+		return err
+	}
 	return s.userRepo.UpdateProfile(user)
 }
 
