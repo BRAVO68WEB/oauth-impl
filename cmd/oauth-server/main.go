@@ -209,6 +209,11 @@ func main() {
 	sessionSvc := service.NewSessionService(sessionRepo, cfg.Security.SessionLifetime)
 	logoutSvc := service.NewLogoutService(sessionSvc, clientRepo, oidcHandler)
 	accountSvc := service.NewAccountService(userSvc, userRepo, emailTokens, loginEvents, sessionSvc, tokenRepo, mail, logoutSvc, cfg)
+	mailTemplates, err := mailer.Load(cfg.Email.TemplatesDir)
+	if err != nil {
+		log.Fatalf("email templates: %v", err)
+	}
+	accountSvc.SetTemplates(mailTemplates)
 	hooks := service.NewWebhookDispatcher(repository.NewWebhookRepository(conn))
 	hooks.SetFetchConfig(cfg)
 	logoutSvc.SetFetchConfig(cfg)

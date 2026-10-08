@@ -10,6 +10,9 @@ server:
     client_auth: "request" # none, request, require, require_and_verify
     crl_file: "./certs/crl.pem"
 
+email:
+  templates_dir: ""
+
 org:
   enabled: false
   enabled_domain_based_autolookup: false
