@@ -1,0 +1,184 @@
+# CLI
+
+`oauth-cli` calls the management API. `oauth-mobile` approves CIBA
+requests. Both take a client-credentials client. Sample curls are in
+[examples.sh](examples.sh). Routes are in [API](API.md).
+
+## Build
+
+```bash
+just build
+# or
+just build-cli
+just build-mobile
+```
+
+Binaries land in `bin/`.
+
+## Credentials
+
+Both tools share these flags:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--server` | `http://127.0.0.1:8080` | Issuer URL |
+| `--client-id` | empty | Management client id |
+| `--client-secret` | empty | Management client secret |
+| `--config` | `config.yaml` | File that holds `management.client_id` and `management.client_secret` |
+
+When the flags are empty, the tool reads `management` from `--config`.
+It then asks `POST /oauth/token` for a token with scope `management`.
+
+`oauth-mobile` also has `--interval` (default 5 seconds) for `poll`.
+
+## init
+
+`init` does not talk to a running server. It writes the config and the
+hasher. See [Configuration](CONFIG.md).
+
+```bash
+./bin/oauth-cli init
+./bin/oauth-cli init --mfa --output config.yaml
+./bin/oauth-cli init --hash argon2id
+./bin/oauth-cli init --force
+```
+
+## oauth-cli commands
+
+```bash
+./bin/oauth-cli server status
+./bin/oauth-cli server discovery
+```
+
+### Clients
+
+```bash
+./bin/oauth-cli client list
+./bin/oauth-cli client create --name "App" --redirect-uri "https://app.example/cb"
+./bin/oauth-cli client get <id>
+./bin/oauth-cli client update <id> --dpop
+./bin/oauth-cli client delete <id>
+./bin/oauth-cli client master
+```
+
+`create` accepts repeated `--redirect-uri`, `--grant-type` (default
+`authorization_code`), and `--scope` (default `openid`), plus
+`--dcr-enabled` and `--cimd-enabled`. `master` creates one client with
+the grants used by conformance tools, including `password`.
+
+### Users
+
+```bash
+./bin/oauth-cli user list
+./bin/oauth-cli user create --username ada --password "correct horse" --email ada@example.com
+./bin/oauth-cli user get <id>
+./bin/oauth-cli user password <id> --password "a new secret"
+./bin/oauth-cli user disable <id>
+./bin/oauth-cli user enable <id>
+```
+
+### Tokens
+
+```bash
+./bin/oauth-cli token list --client-id <id> --user-id <id>
+./bin/oauth-cli token revoke <access-token>
+./bin/oauth-cli token introspect <token>
+./bin/oauth-cli token refresh list
+./bin/oauth-cli token refresh revoke <id>
+```
+
+`refresh list` prints public ids. It does not print the refresh token
+secret.
+
+### MFA
+
+Enrollment in the CLI is TOTP.
+
+```bash
+./bin/oauth-cli mfa enable --user-id <id>
+./bin/oauth-cli mfa enable --user-id <id> --show-secret
+./bin/oauth-cli mfa verify --user-id <id> --code 123456
+./bin/oauth-cli mfa status --user-id <id>
+```
+
+### CIBA, flows, and keys
+
+```bash
+./bin/oauth-cli ciba pending
+./bin/oauth-cli ciba approve <auth-req-id> --user-id <id>
+./bin/oauth-cli ciba deny <auth-req-id> --reason "Denied"
+
+./bin/oauth-cli flow client-credentials --client-id <id> --client-secret <secret>
+./bin/oauth-cli flow device --client-id <id> --client-secret <secret>
+
+./bin/oauth-cli keys generate --output ./keys
+./bin/oauth-cli keys rotate
+```
+
+`keys generate` writes DPoP and client signing keys for OAuch.
+`--dpop-only` and `--client-only` limit the files. `keys rotate` calls
+`POST /api/keys/rotate`.
+
+### Scopes, resources, and consents
+
+```bash
+./bin/oauth-cli scope list
+./bin/oauth-cli scope create --name calendar --description "Calendar read"
+./bin/oauth-cli scope delete calendar
+
+./bin/oauth-cli resource list
+./bin/oauth-cli resource create --uri https://api.example --name API
+./bin/oauth-cli resource delete https://api.example
+
+./bin/oauth-cli consent list --user-id <id>
+./bin/oauth-cli consent revoke --user-id <id> --client-id <id>
+```
+
+### Webhooks, analytics, and audit
+
+```bash
+./bin/oauth-cli webhook list
+./bin/oauth-cli webhook create --url https://app.example/hook --event login --event logout
+./bin/oauth-cli webhook create --url https://app.example/hook --event '*'
+./bin/oauth-cli webhook test <id>
+./bin/oauth-cli webhook delete <id>
+
+./bin/oauth-cli analytics logins
+./bin/oauth-cli analytics logins --user-id <id> --window 24h
+
+./bin/oauth-cli audit list --window 720h --action client.create --actor-id <id>
+```
+
+`--event` repeats. `*` subscribes to every event. Omit `--secret` and
+the server generates one.
+
+### Organizations
+
+Organizations do nothing until `org.enabled` is true. See
+[Configuration](CONFIG.md).
+
+```bash
+./bin/oauth-cli org create --name "North" --slug north --domain north.example
+./bin/oauth-cli org domain --org north --domain west.example
+./bin/oauth-cli org member --org north --user-id <id> --role member
+```
+
+`--role` is `member` or `admin`.
+
+## oauth-mobile
+
+```bash
+./bin/oauth-mobile list
+./bin/oauth-mobile poll
+./bin/oauth-mobile approve <auth-req-id> --user-id <id>
+./bin/oauth-mobile deny <auth-req-id>
+./bin/oauth-mobile status
+```
+
+`poll` prints pending CIBA requests until you interrupt it. `status`
+calls `GET /health` and does not need the management client.
+
+## Related
+
+[Configuration](CONFIG.md) is the file `init` writes.
+[API](API.md) is what these commands call.
