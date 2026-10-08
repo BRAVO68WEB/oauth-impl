@@ -54,7 +54,7 @@ A replacement `login.html` must POST to `/login` and keep these field
 names: `username`, `password`, `client_id`, `redirect_uri`,
 `response_type`, `scope`, `state`, `nonce`, `code_challenge`,
 `code_challenge_method`, `request_uri`, `prompt`, `login_hint`,
-`resource`, and `next`.
+`resource`, `requested_actor`, and `next`.
 
 ## Related
 

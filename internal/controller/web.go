@@ -243,6 +243,7 @@ func extractOAuthParams(r *http.Request) map[string]string {
 		"response_mode":         r.URL.Query().Get("response_mode"),
 		"request":               r.URL.Query().Get("request"),
 		"organization":          r.URL.Query().Get("organization"),
+		"requested_actor":       r.URL.Query().Get("requested_actor"),
 		"next":                  r.URL.Query().Get("next"),
 	}
 }
@@ -265,6 +266,7 @@ func extractOAuthParamsFromForm(r *http.Request) map[string]string {
 		"response_mode":         r.FormValue("response_mode"),
 		"request":               r.FormValue("request"),
 		"organization":          r.FormValue("organization"),
+		"requested_actor":       r.FormValue("requested_actor"),
 		"next":                  r.FormValue("next"),
 	}
 }
@@ -287,6 +289,7 @@ func oauthTemplateData(params map[string]string, extra map[string]interface{}) m
 		"ResponseMode":        params["response_mode"],
 		"Request":             params["request"],
 		"Organization":        params["organization"],
+		"RequestedActor":      params["requested_actor"],
 		"Next":                params["next"],
 	}
 	for k, v := range extra {
@@ -741,9 +744,14 @@ func (c *WebController) HandleConsentPage(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	actorName := ""
+	if id := params["requested_actor"]; id != "" && c.oauthHandler != nil {
+		actorName = c.oauthHandler.ClientName(id)
+	}
 	c.renderPage(w, r, "consent.html", "Authorize", "Authorize Access", params, map[string]any{
-		"Username": session.Username,
-		"Scopes":   strings.Split(params["scope"], " "),
+		"Username":  session.Username,
+		"Scopes":    strings.Split(params["scope"], " "),
+		"ActorName": actorName,
 	})
 }
 
@@ -802,6 +810,9 @@ func (c *WebController) HandleConsent(w http.ResponseWriter, r *http.Request) {
 	if clientID != "" && scope != "" {
 		scopes := strings.Split(scope, " ")
 		_ = c.oauthHandler.SaveConsent(session.UserID, clientID, scopes)
+	}
+	if params["requested_actor"] != "" {
+		c.oauthHandler.GrantActorConsent(session.ID, clientID, params["requested_actor"])
 	}
 
 	// prompt=consent forced this screen. Leaving it on the authorize URL
