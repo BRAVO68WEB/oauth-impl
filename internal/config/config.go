@@ -22,6 +22,7 @@ type Config struct {
 	OIDC         OIDCConfig         `yaml:"oidc"`
 	Management   ManagementConfig   `yaml:"management"`
 	SMTP         SMTPConfig         `yaml:"smtp"`
+	Email        EmailConfig        `yaml:"email"`
 	Branding     BrandingConfig     `yaml:"branding"`
 	Social       SocialConfig       `yaml:"social"`
 	Registration RegistrationConfig `yaml:"registration"`
@@ -110,6 +111,12 @@ type SecurityConfig struct {
 type ManagementConfig struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+}
+
+// EmailConfig points at optional message files. An empty directory keeps
+// the built-in text.
+type EmailConfig struct {
+	TemplatesDir string `yaml:"templates_dir"`
 }
 
 type SMTPConfig struct {

@@ -1,0 +1,116 @@
+package mailer
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+)
+
+// Data is the only value a mail template can read.
+type Data struct {
+	Issuer   string
+	Username string
+	Email    string
+	Link     string
+	Code     string
+	TTL      string
+	IP       string
+	Time     string
+	Agent    string
+	Count    string
+}
+
+// Templates holds operator files. A nil set renders the built-in text.
+type Templates struct {
+	parsed map[string]*template.Template
+}
+
+var builtinMail = map[string]string{
+	"verify":           "Subject: Confirm your email\nConfirm your email:\n\n{{.Link}}\n",
+	"reset":            "Subject: Password reset\nReset your password:\n\n{{.Link}}\n\nThis link expires in {{.TTL}}.\n",
+	"password_changed": "Subject: Password changed\nThe password for {{.Username}} was changed.\n\nIf you did not do this, reset it from {{.Issuer}}/forgot\n",
+	"new_sign_in":      "Subject: New sign-in\nNew sign-in for {{.Username}}\n\nTime: {{.Time}}\nIP: {{.IP}}\nAgent: {{.Agent}}\n",
+	"login_failed":     "Subject: Failed sign-in attempts\n{{.Count}} failed sign-in attempts for {{.Username}} in the last 15 minutes.\n\nLatest IP: {{.IP}}\n",
+	"mfa_email":        "Subject: Sign-in code\nYour sign-in code is {{.Code}}.\n\nIt expires in {{.TTL}}.\n",
+}
+
+// Names are the template files an operator may replace.
+func Names() []string {
+	out := make([]string, 0, len(builtinMail))
+	for name := range builtinMail {
+		out = append(out, name)
+	}
+	return out
+}
+
+// Load reads templates_dir. An empty directory uses built-in text.
+// A file that does not parse is an error. A missing file stays built-in.
+func Load(dir string) (*Templates, error) {
+	set := &Templates{parsed: map[string]*template.Template{}}
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return set, nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("email.templates_dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("email.templates_dir must be a directory")
+	}
+	for name := range builtinMail {
+		path := filepath.Join(dir, name+".txt")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("email template %s: %w", name, err)
+		}
+		parsed, err := parseMail(name, string(body))
+		if err != nil {
+			return nil, fmt.Errorf("email template %s: %w", name, err)
+		}
+		set.parsed[name] = parsed
+	}
+	return set, nil
+}
+
+// Render returns the subject and body for name.
+func Render(set *Templates, name string, data Data) (string, string, error) {
+	source := builtinMail[name]
+	if source == "" {
+		return "", "", fmt.Errorf("unknown email template %s", name)
+	}
+	var parsed *template.Template
+	var err error
+	if set != nil && set.parsed[name] != nil {
+		parsed = set.parsed[name]
+	} else {
+		parsed, err = parseMail(name, source)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	var buf bytes.Buffer
+	if err := parsed.Execute(&buf, data); err != nil {
+		return "", "", err
+	}
+	text := buf.String()
+	line, rest, ok := strings.Cut(text, "\n")
+	if !ok || !strings.HasPrefix(line, "Subject: ") {
+		return "", "", fmt.Errorf("email template %s is missing a subject", name)
+	}
+	return strings.TrimPrefix(line, "Subject: "), rest, nil
+}
+
+func parseMail(name, source string) (*template.Template, error) {
+	line, _, ok := strings.Cut(source, "\n")
+	if !ok || !strings.HasPrefix(line, "Subject: ") {
+		return nil, fmt.Errorf("first line must be Subject:")
+	}
+	return template.New(name).Option("missingkey=error").Parse(source)
+}
