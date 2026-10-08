@@ -28,7 +28,18 @@ type Config struct {
 	Registration RegistrationConfig `yaml:"registration"`
 	Telemetry    TelemetryConfig    `yaml:"telemetry"`
 	Org          OrgConfig          `yaml:"org"`
+	Push         PushConfig         `yaml:"push"`
 	AAuth        AAuthConfig        `yaml:"aauth"`
+}
+
+// PushConfig is authenticator-device registration. Enabled stays false
+// unless set, so a default server does not publish the push document.
+type PushConfig struct {
+	Enabled                bool   `yaml:"enabled"`
+	RegistrationTokenTTL   int    `yaml:"registration_token_ttl"`
+	MinimumInteractionType string `yaml:"minimum_interaction_type"`
+	MaxDevicesPerUser      int    `yaml:"max_devices_per_user"`
+	ClientAttestation      bool   `yaml:"client_attestation_required"`
 }
 
 // AAuthConfig is the agent authorization protocol. Enabled stays false
@@ -365,6 +376,13 @@ func DefaultConfig() *Config {
 			ServiceName: "oauth-server",
 			SampleRatio: 1,
 		},
+		Push: PushConfig{
+			Enabled:                false,
+			RegistrationTokenTTL:   300,
+			MinimumInteractionType: "boolean",
+			MaxDevicesPerUser:      5,
+			ClientAttestation:      false,
+		},
 		AAuth: AAuthConfig{
 			Enabled:      false,
 			ResourceMode: "as",
@@ -459,6 +477,17 @@ func (c *Config) Normalize() {
 	if c.Telemetry.SampleRatio == 0 {
 		c.Telemetry.SampleRatio = 1
 	}
+	if c.Push.RegistrationTokenTTL <= 0 {
+		c.Push.RegistrationTokenTTL = 300
+	}
+	if c.Push.MaxDevicesPerUser <= 0 {
+		c.Push.MaxDevicesPerUser = 5
+	}
+	c.Push.MinimumInteractionType = strings.ToLower(strings.TrimSpace(c.Push.MinimumInteractionType))
+	if c.Push.MinimumInteractionType == "" {
+		c.Push.MinimumInteractionType = "boolean"
+	}
+
 	fallback := strings.TrimRight(strings.TrimSpace(c.Security.Issuer), "/")
 	c.AAuth.APIssuer = aauthIssuer(c.AAuth.APIssuer, fallback)
 	c.AAuth.PSIssuer = aauthIssuer(c.AAuth.PSIssuer, fallback)
@@ -467,6 +496,19 @@ func (c *Config) Normalize() {
 	c.AAuth.ResourceMode = strings.ToLower(strings.TrimSpace(c.AAuth.ResourceMode))
 	if c.AAuth.ResourceMode == "" {
 		c.AAuth.ResourceMode = "as"
+	}
+}
+
+// ValidatePush checks the interaction floor when push devices are on.
+func ValidatePush(c *Config) error {
+	if c == nil || !c.Push.Enabled {
+		return nil
+	}
+	switch c.Push.MinimumInteractionType {
+	case "boolean", "number_choose", "input_manual":
+		return nil
+	default:
+		return fmt.Errorf("push.minimum_interaction_type must be boolean, number_choose, or input_manual")
 	}
 }
 

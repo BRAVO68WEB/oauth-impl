@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
 	root "github.com/bravo68web/oauth-impl"
@@ -23,6 +24,7 @@ import (
 	"github.com/bravo68web/oauth-impl/internal/hashalgo"
 	"github.com/bravo68web/oauth-impl/internal/mailer"
 	"github.com/bravo68web/oauth-impl/internal/oidc"
+	"github.com/bravo68web/oauth-impl/internal/push"
 	"github.com/bravo68web/oauth-impl/internal/queue"
 	"github.com/bravo68web/oauth-impl/internal/repository"
 	"github.com/bravo68web/oauth-impl/internal/route"
@@ -67,6 +69,9 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 		return nil, err
 	}
 	if err := config.ValidatePlatform(cfg); err != nil {
+		return nil, err
+	}
+	if err := config.ValidatePush(cfg); err != nil {
 		return nil, err
 	}
 	if err := config.ValidateAAuth(cfg); err != nil {
@@ -193,6 +198,35 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 	accountCtrl.SetAudit(auditLog)
 	authn := auth.NewMiddleware(tokenRepo, clientRepo, userRepo, dpopSvc)
 
+	var pushHandler *push.Handler
+	if cfg.Push.Enabled {
+		pushSvc := push.NewService(cfg, conn, dpopSvc)
+		pushHandler = push.NewHandler(pushSvc, clientRepo, func(claims jwt.MapClaims) (string, error) {
+			key, kid := oidcHandler.GetKeySet().GetRSAKey()
+			token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+			token.Header["typ"] = "push-reg+jwt"
+			token.Header["kid"] = kid
+			return token.SignedString(key)
+		}, func(token *jwt.Token) (any, error) {
+			if token.Method == nil || token.Method.Alg() != jwt.SigningMethodRS256.Alg() {
+				return nil, fmt.Errorf("unexpected registration token alg")
+			}
+			key, _ := oidcHandler.GetKeySet().GetRSAKey()
+			if key == nil {
+				return nil, fmt.Errorf("signing key unavailable")
+			}
+			return &key.PublicKey, nil
+		}, func(r *http.Request) (string, bool) {
+			session := oauthHandler.GetSession(r)
+			if session == nil || !session.Authenticated {
+				return "", false
+			}
+			return session.UserID, true
+		})
+		webCtrl.SetPush(pushHandler)
+		oauthHandler.SetDeviceLogin(pushSvc)
+	}
+
 	var aauthHandler *aauth.Handler
 	if cfg.AAuth.Enabled {
 		aauthHandler, err = aauth.New(cfg, conn)
@@ -202,7 +236,7 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 		}
 	}
 
-	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, aauthHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
+	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, pushHandler, aauthHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
 	rt.SetContentSecurityPolicy(service.ContentSecurityPolicy(cfg.Security.BotProtection.Provider))
 	return &Built{
 		Mux:   rt.GetMux(),
