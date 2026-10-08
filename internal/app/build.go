@@ -72,7 +72,7 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 		return nil, err
 	}
 	if err := config.ValidatePush(cfg); err != nil {
-  	return nil, err
+		return nil, err
 	}
 	if err := config.ValidateAAuth(cfg); err != nil {
 		return nil, err
@@ -227,7 +227,6 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 		oauthHandler.SetDeviceLogin(pushSvc)
 	}
 
-	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, pushHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
 	var aauthHandler *aauth.Handler
 	if cfg.AAuth.Enabled {
 		aauthHandler, err = aauth.New(cfg, conn)
@@ -237,7 +236,7 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 		}
 	}
 
-	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, aauthHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
+	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, pushHandler, aauthHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)
 	rt.SetContentSecurityPolicy(service.ContentSecurityPolicy(cfg.Security.BotProtection.Provider))
 	return &Built{
 		Mux:   rt.GetMux(),
