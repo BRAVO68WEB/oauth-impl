@@ -163,8 +163,8 @@ func (r *Router) setupRoutes() {
 			r2.Get("/oauth-push-notification", r.pushHandler.Discovery)
 		}
 	})
-	
-  if r.pushHandler != nil {
+
+	if r.pushHandler != nil {
 		r.mux.Get("/push/enroll", r.webCtrl.HandlePushEnroll)
 		r.mux.Get("/push/approve", r.webCtrl.HandlePushApprove)
 		r.mux.Post("/push/approve", r.webCtrl.HandlePushApprove)
@@ -172,8 +172,8 @@ func (r *Router) setupRoutes() {
 		r.mux.Post("/push/revoke", r.pushHandler.Revoke)
 		r.mux.Post("/push/rotate-key", r.pushHandler.Rotate)
 		r.mux.Get("/push/devices", r.pushHandler.Devices)
-  }
-  
+	}
+
 	if r.aauthHandler != nil {
 		r.aauthHandler.Mount(r.mux)
 	}
