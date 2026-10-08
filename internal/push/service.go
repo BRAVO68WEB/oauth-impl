@@ -282,6 +282,7 @@ func (s *Service) Revoke(r *http.Request, deviceID, credential string) (string, 
 	if _, err := s.db.Exec(`UPDATE push_devices SET status = 'revoked', credential_hash = '', last_used_at = ? WHERE id = ?`, s.now().UTC().Format(time.RFC3339), deviceID); err != nil {
 		return "", err
 	}
+	s.cascadeRevoke(deviceID)
 	return s.issueNonce(deviceID), nil
 }
 

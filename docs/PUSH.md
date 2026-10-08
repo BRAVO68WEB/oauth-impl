@@ -20,3 +20,9 @@ revokes itself at `POST /push/revoke` and rotates its key at
 `POST /push/rotate-key`. Both calls require a DPoP proof for the
 registered key. Discovery advertises `poll` only. There is no push
 relay, and attestation is not checked.
+
+A CIBA request for a user with an active device waits on that device.
+`/push/approve` shows the sign-in and records the decision. The client
+then polls `/oauth/token` as usual. A revoked device makes that poll
+return `device_revoked`. An `interaction_type` below
+`push.minimum_interaction_type` is `invalid_request`.

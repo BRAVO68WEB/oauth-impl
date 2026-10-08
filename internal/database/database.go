@@ -400,6 +400,14 @@ func (db *DB) Migrate() error {
 			created_at TEXT NOT NULL,
 			last_used_at TEXT
 		)`,
+		`CREATE TABLE IF NOT EXISTS push_auth_requests (
+			auth_req_id TEXT PRIMARY KEY,
+			device_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			interaction_type TEXT NOT NULL,
+			binding_message TEXT,
+			status TEXT NOT NULL
+		)`,
 	}
 
 	for _, migration := range migrations {

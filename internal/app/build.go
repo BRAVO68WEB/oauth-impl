@@ -220,6 +220,7 @@ func Build(cfg *config.Config, db *database.DB, q queue.Queue) (*Built, error) {
 			return session.UserID, true
 		})
 		webCtrl.SetPush(pushHandler)
+		oauthHandler.SetDeviceLogin(pushSvc)
 	}
 
 	rt := route.NewRouter(mgmtCtrl, webCtrl, oauthHandler, oidcHandler, pushHandler, accountCtrl, authn, root.OpenAPISpec, root.TemplateFS)

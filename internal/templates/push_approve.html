@@ -1,0 +1,19 @@
+{{template "head" .}}
+{{template "brand_header" .}}
+    <p class="lede">A sign-in is waiting on your authenticator.</p>
+    {{if .Approved}}<p id="push-approved" class="lede">Sign-in approved.</p>{{end}}
+    {{if not .Pending}}
+        {{if not .Approved}}<p class="lede">Nothing is waiting.</p>{{end}}
+    {{else}}
+    <form method="POST" action="/push/approve">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="auth_req_id" value="{{.AuthReqID}}">
+        {{if .BindingMessage}}<p id="binding-message">Confirm <strong>{{.BindingMessage}}</strong></p>{{end}}
+        <div class="buttons">
+            <button type="submit" name="action" value="deny" class="btn-deny">Deny</button>
+            <button type="submit" name="action" value="approve" class="btn-approve">Approve sign-in</button>
+        </div>
+    </form>
+    {{end}}
+{{template "card_close" .}}
+{{template "brand_footer" .}}

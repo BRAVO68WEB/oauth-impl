@@ -220,7 +220,7 @@ func isLocalURL(raw string) bool {
 	if err != nil || parsed.IsAbs() || parsed.Host != "" {
 		return false
 	}
-	return parsed.Path == "/device" || parsed.Path == "/oauth/authorize" || parsed.Path == "/push/enroll"
+	return parsed.Path == "/device" || parsed.Path == "/oauth/authorize" || parsed.Path == "/push/enroll" || parsed.Path == "/push/approve"
 }
 
 func (c *WebController) buildAuthorizeURL(params map[string]string) string {
@@ -332,6 +332,56 @@ func (c *WebController) HandlePushEnroll(w http.ResponseWriter, r *http.Request)
 		"QRCodeBase64":      item.QR,
 		"EnrollURL":         item.URL,
 		"RegistrationToken": item.Token,
+	})
+}
+
+func (c *WebController) HandlePushApprove(w http.ResponseWriter, r *http.Request) {
+	if c == nil || c.push == nil {
+		http.NotFound(w, r)
+		return
+	}
+	session := c.getSession(r)
+	if session == nil || !session.Authenticated {
+		http.Redirect(w, r, "/login?next="+url.QueryEscape("/push/approve"), http.StatusFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		if !csrfOK(r) {
+			rejectCSRF(w)
+			return
+		}
+		approve := r.Form.Get("action") != "deny"
+		status := "denied"
+		if approve {
+			status = "approved"
+		}
+		if err := c.push.Service().FinishLogin(session.UserID, r.Form.Get("auth_req_id"), status); err != nil {
+			http.Error(w, "sign-in request is not pending", http.StatusBadRequest)
+			return
+		}
+		if err := c.oauthHandler.CompleteCIBA(r.Form.Get("auth_req_id"), session.UserID, approve); err != nil {
+			http.Error(w, "sign-in request is not pending", http.StatusBadRequest)
+			return
+		}
+		c.renderPage(w, r, "push_approve.html", "Sign-in", "Sign-in", map[string]string{}, map[string]any{
+			"Approved": approve,
+			"Pending":  false,
+		})
+		return
+	}
+	pending, err := c.push.Service().PendingLogins(session.UserID)
+	if err != nil || len(pending) == 0 {
+		c.renderPage(w, r, "push_approve.html", "Sign-in", "Sign-in", map[string]string{}, map[string]any{
+			"Pending": false,
+		})
+		return
+	}
+	item := pending[0]
+	c.renderPage(w, r, "push_approve.html", "Sign-in", "Approve sign-in", map[string]string{}, map[string]any{
+		"Pending":        true,
+		"AuthReqID":      item.AuthReqID,
+		"BindingMessage": item.BindingMessage,
 	})
 }
 
