@@ -28,6 +28,18 @@ type Config struct {
 	Registration RegistrationConfig `yaml:"registration"`
 	Telemetry    TelemetryConfig    `yaml:"telemetry"`
 	Org          OrgConfig          `yaml:"org"`
+	AAuth        AAuthConfig        `yaml:"aauth"`
+}
+
+// AAuthConfig is the agent authorization protocol. Enabled stays false
+// unless set, so a default server does not publish AAuth metadata.
+type AAuthConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	APIssuer       string `yaml:"ap_issuer"`
+	PSIssuer       string `yaml:"ps_issuer"`
+	ASIssuer       string `yaml:"as_issuer"`
+	ResourceIssuer string `yaml:"resource_issuer"`
+	ResourceMode   string `yaml:"resource_mode"`
 }
 
 // OrgConfig turns organizations on. Both flags stay false unless set, so a
@@ -353,6 +365,10 @@ func DefaultConfig() *Config {
 			ServiceName: "oauth-server",
 			SampleRatio: 1,
 		},
+		AAuth: AAuthConfig{
+			Enabled:      false,
+			ResourceMode: "as",
+		},
 	}
 }
 
@@ -443,6 +459,42 @@ func (c *Config) Normalize() {
 	if c.Telemetry.SampleRatio == 0 {
 		c.Telemetry.SampleRatio = 1
 	}
+	fallback := strings.TrimRight(strings.TrimSpace(c.Security.Issuer), "/")
+	c.AAuth.APIssuer = aauthIssuer(c.AAuth.APIssuer, fallback)
+	c.AAuth.PSIssuer = aauthIssuer(c.AAuth.PSIssuer, fallback)
+	c.AAuth.ASIssuer = aauthIssuer(c.AAuth.ASIssuer, fallback)
+	c.AAuth.ResourceIssuer = aauthIssuer(c.AAuth.ResourceIssuer, fallback)
+	c.AAuth.ResourceMode = strings.ToLower(strings.TrimSpace(c.AAuth.ResourceMode))
+	if c.AAuth.ResourceMode == "" {
+		c.AAuth.ResourceMode = "as"
+	}
+}
+
+func aauthIssuer(value, fallback string) string {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// ValidateAAuth checks the flag's issuers. A disabled block is left alone.
+func ValidateAAuth(c *Config) error {
+	if c == nil || !c.AAuth.Enabled {
+		return nil
+	}
+	switch c.AAuth.ResourceMode {
+	case "ps", "as":
+	default:
+		return fmt.Errorf("aauth.resource_mode must be ps or as")
+	}
+	for _, iss := range []string{c.AAuth.APIssuer, c.AAuth.PSIssuer, c.AAuth.ASIssuer, c.AAuth.ResourceIssuer} {
+		parsed, err := url.Parse(iss)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("aauth issuer %q is not an absolute url", iss)
+		}
+	}
+	return nil
 }
 
 var brandColorPattern = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)

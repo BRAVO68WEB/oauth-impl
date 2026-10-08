@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/cors"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bravo68web/oauth-impl/internal/aauth"
 	"github.com/bravo68web/oauth-impl/internal/auth"
 	"github.com/bravo68web/oauth-impl/internal/controller"
 	"github.com/bravo68web/oauth-impl/internal/handlers/oauth"
@@ -27,6 +28,7 @@ type Router struct {
 	webCtrl        *controller.WebController
 	oauthHandler   *oauth.Handler
 	oidcHandler    *oidc.Handler
+	aauthHandler   *aauth.Handler
 	accountCtrl    *controller.AccountController
 	authn          *auth.Middleware
 	openapiJSON    []byte
@@ -45,6 +47,7 @@ func NewRouter(
 	webCtrl *controller.WebController,
 	oauthHandler *oauth.Handler,
 	oidcHandler *oidc.Handler,
+	aauthHandler *aauth.Handler,
 	accountCtrl *controller.AccountController,
 	authn *auth.Middleware,
 	openapiSpec []byte,
@@ -62,6 +65,7 @@ func NewRouter(
 		webCtrl:        webCtrl,
 		oauthHandler:   oauthHandler,
 		oidcHandler:    oidcHandler,
+		aauthHandler:   aauthHandler,
 		accountCtrl:    accountCtrl,
 		authn:          authn,
 		openapiJSON:    openapiJSON,
@@ -152,6 +156,9 @@ func (r *Router) setupRoutes() {
 		r2.Get("/openid-configuration", r.oidcHandler.HandleDiscovery)
 		r2.Get("/oauth-authorization-server", r.oidcHandler.HandleASMetadata)
 	})
+	if r.aauthHandler != nil {
+		r.aauthHandler.Mount(r.mux)
+	}
 
 	r.mux.Route("/oidc", func(r2 chi.Router) {
 		r2.Get("/userinfo", r.oidcHandler.HandleUserInfo)
