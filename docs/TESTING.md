@@ -61,8 +61,8 @@ HEADED=1 npm test
 refresh and signing-key rotation, webhooks, brute-force detection,
 password rules, PKCE, closed registration, MFA enrollment, DPoP, client
 ID metadata documents, JWT access tokens, login identifier, pairwise
-subjects, organizations, and encrypted ID tokens. Default access tokens
-in these tests stay opaque unless a case sets
+subjects, organizations, encrypted ID tokens, and AAuth discovery.
+Default access tokens in these tests stay opaque unless a case sets
 `security.access_token_format` to `jwt`.
 
 Mocha is serial. The spec pattern is `test/**/*.test.js`, so naming one
