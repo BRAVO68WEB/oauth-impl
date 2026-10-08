@@ -84,6 +84,20 @@ function renderConfig(port, dsn, overrides) {
   lines.push("org:");
   lines.push(`  enabled: ${yamlValue(Boolean(org.enabled))}`);
   lines.push(`  enabled_domain_based_autolookup: ${yamlValue(Boolean(org.enabled_domain_based_autolookup))}`);
+  const aauth = overrides.aauth || {};
+  const base = `http://127.0.0.1:${port}`;
+  let asIssuer = aauth.as_issuer || "";
+  if (aauth.as_path) {
+    const suffix = aauth.as_path.startsWith("/") ? aauth.as_path : `/${aauth.as_path}`;
+    asIssuer = base + suffix;
+  }
+  lines.push("aauth:");
+  lines.push(`  enabled: ${yamlValue(Boolean(aauth.enabled))}`);
+  lines.push(`  ap_issuer: ${yamlValue(aauth.ap_issuer || "")}`);
+  lines.push(`  ps_issuer: ${yamlValue(aauth.ps_issuer || "")}`);
+  lines.push(`  as_issuer: ${yamlValue(asIssuer)}`);
+  lines.push(`  resource_issuer: ${yamlValue(aauth.resource_issuer || "")}`);
+  lines.push(`  resource_mode: ${yamlValue(aauth.resource_mode || "as")}`);
   return lines.join("\n") + "\n";
 }
 
