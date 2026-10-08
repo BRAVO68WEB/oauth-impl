@@ -59,7 +59,7 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 	tokenType := boundTokenType(client)
 	orgSlug := h.orgSlug(refreshToken.OrgID)
 
-	newAccessToken, err := h.issueAccessTokenFor(refreshToken.ClientID, refreshToken.UserID, strings.Join(refreshToken.Scopes, " "), tokenType, refreshToken.OrgID, orgSlug)
+	newAccessToken, err := h.issueAccessTokenFor(refreshToken.ClientID, refreshToken.UserID, strings.Join(refreshToken.Scopes, " "), tokenType, refreshToken.OrgID, orgSlug, refreshToken.Resource, refreshToken.Act)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -81,7 +81,9 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		Scopes:    refreshToken.Scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		Resource:  refreshToken.Resource,
 		OrgID:     refreshToken.OrgID,
+		Act:       refreshToken.Act,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -95,6 +97,8 @@ func (h *Handler) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		ClientID:    refreshToken.ClientID,
 		UserID:      refreshToken.UserID,
 		OrgID:       refreshToken.OrgID,
+		Resource:    refreshToken.Resource,
+		Act:         refreshToken.Act,
 		Scopes:      refreshToken.Scopes,
 		FamilyID:    familyID,
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),

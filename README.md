@@ -14,7 +14,7 @@ and traces turn on when you set them.
 ## Features
 
 - Authorization code with PKCE, client credentials, device code, refresh
-  tokens, and token exchange
+  tokens, token exchange, and on-behalf-of delegation to a registered agent
 - CIBA in poll mode, and pushed authorization requests
 - OpenID Connect discovery, JWKS, UserInfo, and ID tokens
 - Pairwise subjects, and nested encryption for ID tokens and UserInfo when

@@ -72,6 +72,22 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	actorToken := r.Form.Get("actor_token")
+	if authCode.RequestedActor != "" {
+		if actorToken == "" {
+			writeTokenError(w, http.StatusBadRequest, "invalid_grant", "actor_token is required")
+			return
+		}
+		subject, err := h.actorSubject(actorToken)
+		if err != nil || subject != authCode.RequestedActor {
+			writeTokenError(w, http.StatusBadRequest, "invalid_grant", "actor_token does not match the consented actor")
+			return
+		}
+	} else if actorToken != "" {
+		writeTokenError(w, http.StatusBadRequest, "invalid_request", "actor_token is not allowed")
+		return
+	}
+
 	switch authenticateClient(client, clientID, clientSecret, true) {
 	case "":
 	case "mismatch":
@@ -101,7 +117,7 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 	tokenType := boundTokenType(client)
 	orgSlug := h.orgSlug(authCode.OrgID)
 
-	accessToken, err := h.issueAccessTokenFor(authCode.ClientID, authCode.UserID, strings.Join(authCode.Scopes, " "), tokenType, authCode.OrgID, orgSlug)
+	accessToken, err := h.issueAccessTokenFor(authCode.ClientID, authCode.UserID, strings.Join(authCode.Scopes, " "), tokenType, authCode.OrgID, orgSlug, authCode.Resource, authCode.RequestedActor)
 	if err != nil {
 		writeTokenError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token")
 		return
@@ -120,7 +136,9 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		Scopes:    authCode.Scopes,
 		TokenType: tokenType,
 		DPoPJKT:   dpopJKT,
+		Resource:  authCode.Resource,
 		OrgID:     authCode.OrgID,
+		Act:       authCode.RequestedActor,
 		ExpiresAt: time.Now().Add(h.cfg.Security.AccessTokenLifetime),
 	}
 
@@ -131,6 +149,8 @@ func (h *Handler) handleAuthorizationCodeToken(w http.ResponseWriter, r *http.Re
 		UserID:      authCode.UserID,
 		Scopes:      authCode.Scopes,
 		FamilyID:    authCode.FamilyID,
+		Resource:    authCode.Resource,
+		Act:         authCode.RequestedActor,
 		OrgID:       authCode.OrgID,
 		ExpiresAt:   time.Now().Add(h.cfg.Security.RefreshTokenLifetime),
 	}

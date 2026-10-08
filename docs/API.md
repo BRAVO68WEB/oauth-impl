@@ -68,6 +68,20 @@ The default discovery list includes every grant above except `password`.
 The password grant sends the identifier in `username`. CIBA on this
 server is poll mode.
 
+An authorization request may include `requested_actor`, the client id
+of an agent registered on this server. That request requires PKCE
+`S256`. The consent screen names the agent and is shown on every such
+request. The token request then includes `actor_token`, an access token
+this server already issued to that agent. The access token is a JWT
+(`typ` `at+jwt`) even when the server default is opaque. `sub` is the
+user, `aud` is the resource or the issuer, `client_id` and `azp` are the
+calling client, and `act` is `{"sub":"<agent client id>"}`. A code
+without `requested_actor` rejects `actor_token`.
+
+JWT access tokens from every grant use that same profile. `aud` is the
+`resource` parameter when the request sends one, and the issuer
+otherwise.
+
 `POST /oauth/introspect` is for confidential clients. A client sees its
 own tokens, tokens whose resource is that client, or every token when
 it is the management client. Anyone else gets `{"active":false}`.

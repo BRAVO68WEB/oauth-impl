@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -51,6 +52,8 @@ type Handler struct {
 	cimd         cache.Cache
 	introspect   *service.Introspector
 	orgs         *service.OrgService
+	actorMu      sync.Mutex
+	actorGrants  map[string]time.Time
 }
 
 type LoginRecorder interface {
@@ -181,6 +184,7 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	loginHint := r.URL.Query().Get("login_hint")
 	resource := r.URL.Query().Get("resource")
 	organization := r.URL.Query().Get("organization")
+	requestedActor := strings.TrimSpace(r.URL.Query().Get("requested_actor"))
 	requestURI := r.URL.Query().Get("request_uri")
 	request := r.URL.Query().Get("request")
 
@@ -245,6 +249,9 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 				if v, ok := claims["organization"]; ok && organization == "" {
 					organization = v
 				}
+				if v, ok := claims["requested_actor"]; ok && requestedActor == "" {
+					requestedActor = strings.TrimSpace(v)
+				}
 			}
 		}
 	}
@@ -304,6 +311,9 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		if v, ok := params["organization"]; ok && organization == "" {
 			organization = v
 		}
+		if v, ok := params["requested_actor"]; ok && requestedActor == "" {
+			requestedActor = strings.TrimSpace(v)
+		}
 	}
 
 	if clientID == "" {
@@ -355,6 +365,21 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code_challenge is required", state)
 		return
 	}
+	if requestedActor != "" {
+		if responseType != "code" {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "requested_actor requires response_type code", state)
+			return
+		}
+		if codeChallenge == "" || codeChallengeMethod != "S256" {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "requested_actor requires S256 PKCE", state)
+			return
+		}
+		actor, err := h.clientRepo.GetByID(requestedActor)
+		if err != nil || actor == nil {
+			writeOAuthError(w, http.StatusBadRequest, "invalid_request", "requested_actor is not recognized", state)
+			return
+		}
+	}
 
 	// Nonce is required for implicit/hybrid flows (response_type contains id_token)
 	needsIDToken := strings.Contains(responseType, "id_token")
@@ -371,7 +396,7 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 			writeOAuthError(w, http.StatusFound, "login_required", "User must be authenticated", state)
 			return
 		}
-		if !h.hasConsented(session.UserID, clientID, scope) {
+		if requestedActor != "" || !h.hasConsented(session.UserID, clientID, scope) {
 			writeOAuthError(w, http.StatusFound, "consent_required", "User consent required", state)
 			return
 		}
@@ -385,7 +410,7 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Proceed directly
-		h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization)
+		h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization, requestedActor)
 		return
 	}
 
@@ -427,17 +452,23 @@ func (h *Handler) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Consent check
-	if prompt == "consent" || !h.hasConsented(session.UserID, clientID, scope) {
+	// A named actor is confirmed on its own. The consent POST leaves a
+	// one-time grant so this request can finish without asking again.
+	if requestedActor != "" {
+		if !h.takeActorConsent(session.ID, clientID, requestedActor) {
+			http.Redirect(w, r, "/consent?"+r.URL.RawQuery, http.StatusFound)
+			return
+		}
+	} else if prompt == "consent" || !h.hasConsented(session.UserID, clientID, scope) {
 		consentURL := "/consent?" + r.URL.RawQuery
 		http.Redirect(w, r, consentURL, http.StatusFound)
 		return
 	}
 
-	h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization)
+	h.issueAuthorizationResponse(w, r, client, session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization, requestedActor)
 }
 
-func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Request, client *models.Client, session *Session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization string) {
+func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Request, client *models.Client, session *Session, responseType, responseMode, redirectURI, scope, state, nonce, codeChallenge, codeChallengeMethod, resource, organization, requestedActor string) {
 	scopes := crypto.NormalizeScopes(scope)
 	hasOpenID := containsScope(scopes, "openid")
 	var account *models.User
@@ -495,6 +526,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 			SessionID:           session.ID,
 			AuthTime:            session.AuthTime,
 			OrgID:               orgID,
+			RequestedActor:      requestedActor,
 			ExpiresAt:           time.Now().Add(h.cfg.Security.AuthorizationCodeLifetime),
 			Used:                false,
 		}
@@ -506,7 +538,7 @@ func (h *Handler) issueAuthorizationResponse(w http.ResponseWriter, r *http.Requ
 	}
 
 	if needsToken {
-		accessToken, err = h.issueAccessTokenFor(client.ID, session.UserID, scope, "Bearer", orgID, orgSlug)
+		accessToken, err = h.issueAccessTokenFor(client.ID, session.UserID, scope, "Bearer", orgID, orgSlug, resource, "")
 		if err != nil {
 			writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to generate access token", state)
 			return
@@ -1044,23 +1076,85 @@ func isValidURI(uri string) bool {
 }
 
 func (h *Handler) issueAccessToken(clientID, userID, scope, tokenType string) (string, error) {
-	return h.issueAccessTokenFor(clientID, userID, scope, tokenType, "", "")
+	return h.issueAccessTokenFor(clientID, userID, scope, tokenType, "", "", "", "")
 }
 
-func (h *Handler) issueAccessTokenFor(clientID, userID, scope, tokenType, orgID, orgSlug string) (string, error) {
+func (h *Handler) issueAccessTokenFor(clientID, userID, scope, tokenType, orgID, orgSlug, resource, actor string) (string, error) {
 	format := ""
 	var lifetime time.Duration
 	if h.cfg != nil {
 		format = h.cfg.Security.AccessTokenFormat
 		lifetime = h.cfg.Security.AccessTokenLifetime
 	}
-	if format == "jwt" {
+	if format == "jwt" || actor != "" {
 		if h.oidcHandler == nil {
 			return "", fmt.Errorf("jwt access tokens require the oidc handler")
 		}
-		return h.oidcHandler.CreateAccessTokenJWT(clientID, userID, scope, tokenType, lifetime, orgID, orgSlug)
+		return h.oidcHandler.CreateAccessTokenJWT(clientID, userID, scope, tokenType, lifetime, orgID, orgSlug, resource, actor)
 	}
 	return crypto.GenerateToken()
+}
+
+func actorGrantKey(sessionID, clientID, actor string) string {
+	return sessionID + "\n" + clientID + "\n" + actor
+}
+
+// GrantActorConsent remembers that this browser session just approved an actor.
+func (h *Handler) GrantActorConsent(sessionID, clientID, actor string) {
+	if h == nil || sessionID == "" || clientID == "" || actor == "" {
+		return
+	}
+	h.actorMu.Lock()
+	defer h.actorMu.Unlock()
+	if h.actorGrants == nil {
+		h.actorGrants = map[string]time.Time{}
+	}
+	h.actorGrants[actorGrantKey(sessionID, clientID, actor)] = time.Now().Add(2 * time.Minute)
+}
+
+func (h *Handler) takeActorConsent(sessionID, clientID, actor string) bool {
+	if h == nil || sessionID == "" {
+		return false
+	}
+	h.actorMu.Lock()
+	defer h.actorMu.Unlock()
+	if h.actorGrants == nil {
+		return false
+	}
+	key := actorGrantKey(sessionID, clientID, actor)
+	expires, ok := h.actorGrants[key]
+	delete(h.actorGrants, key)
+	return ok && time.Now().Before(expires)
+}
+
+// actorSubject returns the subject of an access token issued by this server.
+// A token with no user names its client. A JWT must also verify.
+func (h *Handler) actorSubject(raw string) (string, error) {
+	if h == nil || h.tokenRepo == nil || strings.TrimSpace(raw) == "" {
+		return "", fmt.Errorf("invalid actor token")
+	}
+	at, err := h.tokenRepo.GetAccessToken(raw)
+	if err != nil || at == nil || at.Revoked || (!at.ExpiresAt.IsZero() && time.Now().After(at.ExpiresAt)) {
+		return "", fmt.Errorf("invalid actor token")
+	}
+	subject := at.ClientID
+	if at.UserID != "" {
+		subject = at.UserID
+	}
+	if strings.Count(raw, ".") == 2 {
+		if h.oidcHandler == nil {
+			return "", fmt.Errorf("invalid actor token")
+		}
+		sub, err := h.oidcHandler.AccessTokenSubject(raw)
+		if err != nil {
+			return "", fmt.Errorf("invalid actor token")
+		}
+		subject = sub
+	}
+	if subject == "" {
+		return "", fmt.Errorf("invalid actor token")
+	}
+	return subject, nil
 }
 
 func (h *Handler) needsOrgChoice(client *models.Client, userID, requested string) (bool, error) {

@@ -94,8 +94,12 @@ func (s *Introspector) Introspect(caller *models.Client, raw, hint string) (*Int
 			}
 		}
 	}
-	if strings.TrimSpace(act) != "" && json.Valid([]byte(act)) {
-		out.Act = json.RawMessage(act)
+	if act = strings.TrimSpace(act); act != "" {
+		if json.Valid([]byte(act)) && strings.HasPrefix(act, "{") {
+			out.Act = json.RawMessage(act)
+		} else if raw, err := json.Marshal(map[string]string{"sub": act}); err == nil {
+			out.Act = raw
+		}
 	}
 	return out, nil
 }
